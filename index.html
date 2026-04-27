@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPA Search — Moteur de recherche Infirmier en Pratique Avancée</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⚕</span>
+        <div>
+          <h1>IPA Search</h1>
+          <p>Moteur de recherche — Infirmier en Pratique Avancée</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- Search card -->
+    <section class="search-card">
+      <label class="search-label" for="query">Posez votre question clinique</label>
+      <div class="search-row">
+        <textarea
+          id="query"
+          class="search-input"
+          placeholder="Ex : Quelle est la prise en charge du diabète de type 2 chez l'adulte ?"
+          rows="3"
+          autocomplete="off"
+          spellcheck="true"
+        ></textarea>
+      </div>
+
+      <!-- Source selector -->
+      <div class="options-grid">
+        <button class="option-btn active" data-mode="openevidence">
+          <span class="option-icon">🔬</span>
+          <span class="option-title">Open Evidence</span>
+          <span class="option-desc">Études cliniques &amp; littérature scientifique</span>
+        </button>
+
+        <button class="option-btn" data-mode="has">
+          <span class="option-icon">📋</span>
+          <span class="option-title">Recommandations officielles</span>
+          <span class="option-desc">HAS, ANSM, Société savantes…</span>
+        </button>
+
+        <button class="option-btn" data-mode="medicaments">
+          <span class="option-icon">💊</span>
+          <span class="option-title">Base médicamenteuse</span>
+          <span class="option-desc">Base de données publique des médicaments (état.fr)</span>
+        </button>
+      </div>
+
+      <button class="search-btn" id="searchBtn">
+        <span class="btn-icon">🔍</span> Rechercher
+      </button>
+    </section>
+
+    <!-- Results area -->
+    <section class="results-section" id="resultsSection" hidden>
+      <div class="results-header">
+        <h2 id="resultsTitle"></h2>
+        <span class="results-badge" id="resultsBadge"></span>
+      </div>
+
+      <div id="resultsContainer"></div>
+
+      <div class="open-source-link" id="openSourceLink">
+        <a id="externalLink" href="#" target="_blank" rel="noopener noreferrer">
+          Voir les résultats complets sur la source officielle →
+        </a>
+      </div>
+    </section>
+
+    <!-- Loading -->
+    <div class="loading" id="loading" hidden>
+      <div class="spinner"></div>
+      <p>Recherche en cours…</p>
+    </div>
+
+    <!-- Error -->
+    <div class="error-box" id="errorBox" hidden>
+      <p id="errorMsg"></p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <p>IPA Search · Outil d'aide à la décision clinique · Destiné aux professionnels de santé</p>
+    <p class="footer-disclaimer">Les résultats ne remplacent pas le jugement clinique ni la consultation de sources primaires.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
