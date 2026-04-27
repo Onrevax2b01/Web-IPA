@@ -86,15 +86,24 @@ async function findDCI(sentence) {
     .split(/\s+/)
     .filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
 
-  for (const word of words.slice(0, 8)) {
+  for (const word of words.slice(0, 6)) {
     try {
-      const data = await get(
-        'https://rxnav.nlm.nih.gov/REST/drugs.json?name=' + encodeURIComponent(word)
+      // Étape 1 : obtenir le RxCUI (identifiant unique RxNorm)
+      const data1 = await get(
+        'https://rxnav.nlm.nih.gov/REST/rxcui.json?name=' + encodeURIComponent(word) + '&search=2'
       );
-      const groups = data?.drugGroup?.conceptGroup ?? [];
-      const ingredientGrp = groups.find((g) => g.tty === 'IN' && g.conceptProperties?.length > 0);
-      if (ingredientGrp) {
-        return { brand: word, dci: ingredientGrp.conceptProperties[0].name };
+      const rxcui = data1?.idGroup?.rxnormId?.[0];
+      if (!rxcui) continue;
+
+      // Étape 2 : obtenir le principe actif (TTY=IN) lié au RxCUI
+      const data2 = await get(
+        'https://rxnav.nlm.nih.gov/REST/rxcui/' + rxcui + '/related.json?tty=IN'
+      );
+      const groups   = data2?.relatedGroup?.conceptGroup ?? [];
+      const ingGroup = groups.find((g) => g.tty === 'IN' && g.conceptProperties?.length > 0);
+
+      if (ingGroup) {
+        return { brand: word, dci: ingGroup.conceptProperties[0].name };
       }
     } catch { continue; }
   }
