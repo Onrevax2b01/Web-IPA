@@ -220,20 +220,18 @@ async function runWithPuter() {
     filterCard.hidden     = false;
     claudeResponse.innerHTML = markdownToHtml(text);
     claudeCard.hidden = false;
-    claudeCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
     hideAll();
     resultsSection.hidden = false;
     filterCard.hidden     = false;
 
-    // Limite atteinte ou quota dépassé → proposer la clé API
     const isLimit = /limit|rate|quota|429/i.test(err.message || '');
     if (isLimit) {
       limitBox.hidden     = false;
       apiKeySection.hidden = false;
       apiKeyInput.focus();
     } else {
-      // Autre erreur Puter → aussi proposer la clé API
       limitBox.hidden     = false;
       apiKeySection.hidden = false;
     }
@@ -273,7 +271,7 @@ async function runWithApiKey(apiKey) {
     filterCard.hidden     = false;
     claudeResponse.innerHTML = markdownToHtml(text);
     claudeCard.hidden = false;
-    claudeCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
     showError('Erreur Claude : ' + err.message);
     resultsSection.hidden = false;

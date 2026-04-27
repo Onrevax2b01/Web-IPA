@@ -113,7 +113,7 @@
         </p>
       </div>
 
-      <!-- Carte synthèse (résumés bruts + copier) — au-dessus des résultats PubMed -->
+      <!-- Synthèse clinique — au-dessus des résultats PubMed -->
       <section class="synthesis-card" id="synthesisCard" hidden>
         <div class="synthesis-header">
           <h2>Synthèse clinique</h2>
@@ -129,6 +129,15 @@
         </div>
       </section>
 
+      <!-- Résumé Claude — au-dessus des résultats PubMed -->
+      <section class="claude-card" id="claudeCard" hidden>
+        <div class="synthesis-header">
+          <h2>🤖 Synthèse générée par Claude</h2>
+          <span class="synthesis-badge" id="claudeBadge">Claude Sonnet</span>
+        </div>
+        <div class="claude-response" id="claudeResponse"></div>
+      </section>
+
       <div class="results-header">
         <h2 id="resultsTitle"></h2>
         <span class="results-badge" id="resultsBadge"></span>
@@ -141,14 +150,6 @@
       </div>
     </section>
 
-    <!-- Carte réponse Claude -->
-    <section class="claude-card" id="claudeCard" hidden>
-      <div class="synthesis-header">
-        <h2>🤖 Synthèse générée par Claude</h2>
-        <span class="synthesis-badge" id="claudeBadge">Claude Sonnet</span>
-      </div>
-      <div class="claude-response" id="claudeResponse"></div>
-    </section>
   </main>
 
   <footer class="footer">
