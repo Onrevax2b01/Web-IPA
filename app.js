@@ -22,12 +22,18 @@ const resultsTitle     = document.getElementById('resultsTitle');
 const resultsBadge     = document.getElementById('resultsBadge');
 const resultsContainer = document.getElementById('resultsContainer');
 const externalLink     = document.getElementById('externalLink');
-const synthesisBtn     = document.getElementById('synthesisBtn');
-const synthesisCard    = document.getElementById('synthesisCard');
-const synthesisBadge   = document.getElementById('synthesisBadge');
+const synthesisBtn       = document.getElementById('synthesisBtn');
+const synthesisCard      = document.getElementById('synthesisCard');
+const synthesisBadge     = document.getElementById('synthesisBadge');
 const synthesisAbstracts = document.getElementById('synthesisAbstracts');
-const copyBtn          = document.getElementById('copyBtn');
-const copyConfirm      = document.getElementById('copyConfirm');
+const copyBtn            = document.getElementById('copyBtn');
+const copyConfirm        = document.getElementById('copyConfirm');
+const claudeBtn          = document.getElementById('claudeBtn');
+const claudeCard         = document.getElementById('claudeCard');
+const claudeResponse     = document.getElementById('claudeResponse');
+const apiKeySection      = document.getElementById('apiKeySection');
+const apiKeyInput        = document.getElementById('apiKeyInput');
+const saveKeyBtn         = document.getElementById('saveKeyBtn');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -66,6 +72,12 @@ document.querySelectorAll('.period-btn').forEach((btn) => {
 
 synthesisBtn.addEventListener('click', generateSynthesis);
 copyBtn.addEventListener('click', copyContext);
+claudeBtn.addEventListener('click', handleClaudeBtn);
+saveKeyBtn.addEventListener('click', saveApiKey);
+
+// Pré-remplir la clé si déjà enregistrée
+const storedKey = localStorage.getItem('ipa_anthropic_key');
+if (storedKey) apiKeyInput.value = storedKey;
 
 // ── Recherche principale ──────────────────────────────────────────────────────
 
@@ -147,6 +159,115 @@ async function applyFilters() {
   } catch (err) {
     showError('Erreur lors du filtrage : ' + err.message);
   }
+}
+
+// ── Claude IA ─────────────────────────────────────────────────────────────────
+
+function handleClaudeBtn() {
+  const key = localStorage.getItem('ipa_anthropic_key');
+  if (!key) {
+    apiKeySection.hidden = false;
+    apiKeyInput.focus();
+    return;
+  }
+  runClaudeSynthesis(key);
+}
+
+function saveApiKey() {
+  const key = apiKeyInput.value.trim();
+  if (!key.startsWith('sk-ant-')) {
+    apiKeyInput.style.borderColor = '#f87171';
+    setTimeout(() => { apiKeyInput.style.borderColor = ''; }, 1500);
+    return;
+  }
+  localStorage.setItem('ipa_anthropic_key', key);
+  apiKeySection.hidden = true;
+  runClaudeSynthesis(key);
+}
+
+async function runClaudeSynthesis(apiKey) {
+  if (currentArticleIds.length === 0) return;
+  claudeBtn.disabled = true;
+  claudeCard.hidden  = true;
+  showLoading('Récupération des résumés et génération par Claude…');
+
+  try {
+    const abstracts = await fetchAbstracts(currentArticleIds.slice(0, 8));
+    hideAll();
+    resultsSection.hidden = false;
+    filterCard.hidden     = false;
+
+    const prompt = buildPrompt(currentDisplayQuery, abstracts);
+    const response = await callClaude(apiKey, prompt);
+
+    claudeResponse.innerHTML = markdownToHtml(response);
+    claudeCard.hidden = false;
+    claudeCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    showError('Erreur Claude : ' + err.message);
+    resultsSection.hidden = false;
+    filterCard.hidden     = false;
+  } finally {
+    claudeBtn.disabled = false;
+  }
+}
+
+async function callClaude(apiKey, prompt) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || 'Réponse HTTP ' + res.status);
+  }
+  const data = await res.json();
+  return data.content[0].text;
+}
+
+function buildPrompt(question, abstracts) {
+  return (
+    'Tu es un assistant clinique pour infirmiers en pratique avancée (IPA).\n\n' +
+    'Question clinique posée : ' + question + '\n\n' +
+    'Voici les résumés de ' + abstracts.length + ' études scientifiques issues de PubMed :\n\n' +
+    abstracts.map((a, i) =>
+      '--- Article ' + (i + 1) + ' ---\n' +
+      'Titre : ' + a.title + '\n' +
+      (a.journal ? 'Journal : ' + a.journal + ' (' + a.year + ')\n' : '') +
+      'Résumé : ' + (a.abstract || 'Non disponible')
+    ).join('\n\n') +
+    '\n\n---\n' +
+    'Sur la base de ces études, rédige en français une synthèse clinique structurée avec :\n' +
+    '1. **Recommandations principales** issues des études\n' +
+    '2. **Niveau de preuve** (fort / modéré / faible / insuffisant)\n' +
+    '3. **Points de vigilance** pour la pratique infirmière avancée\n\n' +
+    'Sois concis, précis et directement applicable à la pratique clinique.'
+  );
+}
+
+function markdownToHtml(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,  '<h3>$1</h3>')
+    .replace(/^# (.+)$/gm,   '<h3>$1</h3>')
+    .replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>')
+    .replace(/^[-•]\s+(.+)$/gm,  '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, (m) => '<ul>' + m + '</ul>')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/^(?!<[hul])(.+)$/gm, (m) => m.startsWith('<') ? m : m)
+    .split('\n').filter(l => l.trim()).join('\n');
 }
 
 // ── Synthèse clinique ─────────────────────────────────────────────────────────
@@ -439,6 +560,7 @@ function hideAll() {
   resultsSection.hidden = true;
   filterCard.hidden     = true;
   synthesisCard.hidden  = true;
+  claudeCard.hidden     = true;
 }
 
 function hideInfoBoxes() {
