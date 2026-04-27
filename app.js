@@ -23,32 +23,71 @@ async function runSearch() {
   showLoading();
 
   try {
-    const results = await searchEuropePMC(q);
+    const results = await searchPubMed(q);
     renderResults(results, q);
   } catch (err) {
-    showError(err.message || 'Une erreur est survenue. Veuillez réessayer.');
+    showError('Erreur : ' + (err.message || 'Impossible de contacter PubMed. Vérifiez votre connexion.'));
   }
 }
 
-async function searchEuropePMC(query) {
-  const url =
-    `https://www.ebi.ac.uk/europepmc/webservices/rest/search` +
-    `?query=${encodeURIComponent(query)}` +
-    `&format=json` +
-    `&resultType=core` +
-    `&pageSize=10` +
-    `&sort=CITED+desc`;
+// ── PubMed via NCBI E-utilities (CORS enabled, gratuit, sans clé) ────────────
 
-  const data = await fetchJSON(url);
-  return data?.resultList?.result ?? [];
+async function searchPubMed(query) {
+  // Étape 1 : récupérer les IDs
+  const searchData = await get(
+    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi' +
+    '?db=pubmed&retmode=json&retmax=10&term=' + encodeURIComponent(query)
+  );
+
+  const ids = searchData?.esearchresult?.idlist ?? [];
+  if (ids.length === 0) return [];
+
+  // Étape 2 : récupérer les détails
+  const summaryData = await get(
+    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi' +
+    '?db=pubmed&retmode=json&id=' + ids.join(',')
+  );
+
+  const resultMap = summaryData?.result ?? {};
+
+  return ids.map((id) => {
+    const item = resultMap[id];
+    if (!item || typeof item !== 'object') return null;
+    return {
+      id,
+      title:   item.title    || 'Sans titre',
+      journal: item.source   || '',
+      year:    (item.pubdate || '').slice(0, 4),
+      authors: (item.authors ?? []).slice(0, 5).map((a) => a.name).join(', '),
+      url:     'https://pubmed.ncbi.nlm.nih.gov/' + id + '/',
+    };
+  }).filter(Boolean);
 }
+
+// Fetch simple avec timeout 10s
+async function get(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
+    return await res.json();
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Délai dépassé (10 s). Vérifiez votre connexion.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Rendu ────────────────────────────────────────────────────────────────────
 
 function renderResults(results, query) {
   hideAll();
 
-  resultsTitle.textContent = 'Résultats — Europe PMC';
-  resultsBadge.textContent = `${results.length} résultat${results.length !== 1 ? 's' : ''}`;
-  externalLink.href = `https://europepmc.org/search?query=${encodeURIComponent(query)}`;
+  resultsTitle.textContent  = 'Résultats PubMed';
+  resultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
+  externalLink.href         = 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(query);
 
   resultsContainer.innerHTML = '';
 
@@ -66,103 +105,70 @@ function buildCard(r) {
   const card = document.createElement('div');
   card.className = 'result-item';
 
-  // Titre
+  // Titre + lien
   const titleEl = document.createElement('div');
   titleEl.className = 'result-title';
   const a = document.createElement('a');
-  a.href = r.doi
-    ? `https://doi.org/${r.doi}`
-    : `https://europepmc.org/article/${r.source}/${r.id}`;
+  a.href   = r.url;
   a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  a.textContent = r.title || 'Sans titre';
+  a.rel    = 'noopener noreferrer';
+  a.textContent = r.title;
   titleEl.appendChild(a);
   card.appendChild(titleEl);
 
-  // Méta (journal, année, type)
-  const metaEl = document.createElement('div');
-  metaEl.className = 'result-meta';
-  [
-    r.journalTitle,
-    r.pubYear,
-    r.pubType,
-  ].filter(Boolean).forEach((label) => {
+  // Journal · année
+  const meta = document.createElement('div');
+  meta.className = 'result-meta';
+  [r.journal, r.year].filter(Boolean).forEach((label) => {
     const tag = document.createElement('span');
-    tag.className = 'tag';
+    tag.className   = 'tag';
     tag.textContent = label;
-    metaEl.appendChild(tag);
+    meta.appendChild(tag);
   });
-  if (metaEl.childNodes.length) card.appendChild(metaEl);
+  if (meta.childNodes.length) card.appendChild(meta);
 
   // Auteurs
-  if (r.authorString) {
-    const authors = document.createElement('p');
-    authors.className = 'result-meta';
-    authors.style.color = 'var(--muted)';
-    authors.textContent = r.authorString;
-    card.appendChild(authors);
-  }
-
-  // Résumé
-  if (r.abstractText) {
-    const abs = document.createElement('p');
-    abs.className = 'result-abstract';
-    abs.textContent = r.abstractText.slice(0, 300) + (r.abstractText.length > 300 ? '…' : '');
-    card.appendChild(abs);
+  if (r.authors) {
+    const auth = document.createElement('p');
+    auth.className   = 'result-meta';
+    auth.textContent = r.authors;
+    card.appendChild(auth);
   }
 
   // Lien
   const link = document.createElement('a');
-  link.className = 'result-link';
-  link.href = a.href;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  link.textContent = 'Lire l\'article →';
+  link.className   = 'result-link';
+  link.href        = r.url;
+  link.target      = '_blank';
+  link.rel         = 'noopener noreferrer';
+  link.textContent = 'Lire sur PubMed →';
   card.appendChild(link);
 
   return card;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── UI helpers ───────────────────────────────────────────────────────────────
 
 function showLoading() {
   resultsSection.hidden = true;
-  errorBox.hidden = true;
-  loadingEl.hidden = false;
+  errorBox.hidden       = true;
+  loadingEl.hidden      = false;
 }
 
 function hideAll() {
-  loadingEl.hidden = true;
-  errorBox.hidden = true;
+  loadingEl.hidden      = true;
+  errorBox.hidden       = true;
   resultsSection.hidden = true;
 }
 
 function showError(msg) {
   hideAll();
   errorMsg.textContent = msg;
-  errorBox.hidden = false;
+  errorBox.hidden      = false;
 }
 
 function flashInput() {
   queryEl.style.borderColor = '#f87171';
   queryEl.focus();
   setTimeout(() => { queryEl.style.borderColor = ''; }, 1200);
-}
-
-async function fetchJSON(url, timeoutMs = 10000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`Erreur réseau (${res.status})`);
-    return await res.json();
-  } catch (err) {
-    if (err.name === 'AbortError') throw new Error('Délai dépassé. Vérifiez votre connexion et réessayez.');
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
 }
