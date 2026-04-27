@@ -20,6 +20,7 @@
   </header>
 
   <main class="main">
+    <!-- Carte de recherche -->
     <section class="search-card">
       <label class="search-label" for="query">Posez votre question clinique</label>
       <textarea
@@ -31,34 +32,60 @@
         spellcheck="true"
       ></textarea>
       <p class="search-hint">Posez votre question en français — elle sera traduite automatiquement en anglais.</p>
+
       <div class="translation-box" id="translationBox" hidden>
         <span class="translation-label">Recherche traduite :</span>
         <span id="translatedQuery"></span>
-      </div>
-      <div class="dci-box" id="dciBox" hidden>
-        <span class="dci-label">Principe actif (DCI) :</span>
-        <span id="dciName"></span>
       </div>
       <div class="conversion-box" id="conversionBox" hidden>
         <span class="conversion-label">⚠ Nom commercial remplacé :</span>
         <span id="conversionText"></span>
       </div>
+      <div class="dci-box" id="dciBox" hidden>
+        <span class="dci-label">Principe actif (DCI) :</span>
+        <span id="dciName"></span>
+      </div>
       <div class="mesh-box" id="meshBox" hidden>
         <span class="mesh-label">Termes MeSH utilisés :</span>
         <span id="meshTerms"></span>
       </div>
+
       <button class="search-btn" id="searchBtn">🔍 Rechercher</button>
     </section>
 
+    <!-- Filtres (visibles après une recherche) -->
+    <section class="filter-card" id="filterCard" hidden>
+      <div class="filter-row">
+        <span class="filter-label">Type d'étude :</span>
+        <div class="filter-btns">
+          <button class="filter-btn active" data-pt="">Tous</button>
+          <button class="filter-btn" data-pt="meta-analysis[pt] OR systematic review[pt]">Méta-analyses</button>
+          <button class="filter-btn" data-pt="randomized controlled trial[pt]">Essais cliniques</button>
+          <button class="filter-btn" data-pt="review[pt]">Revues</button>
+        </div>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Période :</span>
+        <div class="filter-btns">
+          <button class="period-btn active" data-years="0">Toutes dates</button>
+          <button class="period-btn" data-years="5">5 dernières années</button>
+          <button class="period-btn" data-years="10">10 dernières années</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Spinner -->
     <div class="loading" id="loading" hidden>
       <div class="spinner"></div>
-      <p>Recherche en cours…</p>
+      <p id="loadingMsg">Recherche en cours…</p>
     </div>
 
+    <!-- Erreur -->
     <div class="error-box" id="errorBox" hidden>
       <p id="errorMsg"></p>
     </div>
 
+    <!-- Résultats -->
     <section class="results-section" id="resultsSection" hidden>
       <div class="results-header">
         <h2 id="resultsTitle"></h2>
@@ -69,6 +96,30 @@
         <a id="externalLink" href="#" target="_blank" rel="noopener noreferrer">
           Voir tous les résultats sur PubMed →
         </a>
+      </div>
+
+      <!-- Bouton synthèse -->
+      <div class="synthesis-trigger">
+        <button class="synthesis-btn" id="synthesisBtn">
+          📋 Générer une synthèse clinique
+        </button>
+        <p class="synthesis-hint">Récupère les résumés des articles et génère un contexte prêt à copier dans un assistant IA.</p>
+      </div>
+    </section>
+
+    <!-- Carte synthèse -->
+    <section class="synthesis-card" id="synthesisCard" hidden>
+      <div class="synthesis-header">
+        <h2>Synthèse clinique</h2>
+        <span class="synthesis-badge" id="synthesisBadge"></span>
+      </div>
+
+      <div id="synthesisAbstracts"></div>
+
+      <div class="copy-section">
+        <button class="copy-btn" id="copyBtn">📋 Copier le contexte pour IA</button>
+        <span class="copy-confirm" id="copyConfirm" hidden>✓ Copié !</span>
+        <p class="copy-hint">Collez ce texte dans Claude.ai, ChatGPT ou tout autre assistant IA pour obtenir une synthèse rédigée.</p>
       </div>
     </section>
   </main>
