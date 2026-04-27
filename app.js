@@ -424,7 +424,7 @@ function renderSynthesis(abstracts) {
   });
 
   synthesisCard.hidden = false;
-  synthesisCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── Copier le contexte pour IA ────────────────────────────────────────────────

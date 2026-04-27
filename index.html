@@ -113,6 +113,22 @@
         </p>
       </div>
 
+      <!-- Carte synthèse (résumés bruts + copier) — au-dessus des résultats PubMed -->
+      <section class="synthesis-card" id="synthesisCard" hidden>
+        <div class="synthesis-header">
+          <h2>Synthèse clinique</h2>
+          <span class="synthesis-badge" id="synthesisBadge"></span>
+        </div>
+
+        <div id="synthesisAbstracts"></div>
+
+        <div class="copy-section">
+          <button class="copy-btn" id="copyBtn">📋 Copier le contexte pour IA</button>
+          <span class="copy-confirm" id="copyConfirm" hidden>✓ Copié !</span>
+          <p class="copy-hint">Collez ce texte dans Claude.ai, ChatGPT ou tout autre assistant IA pour obtenir une synthèse rédigée.</p>
+        </div>
+      </section>
+
       <div class="results-header">
         <h2 id="resultsTitle"></h2>
         <span class="results-badge" id="resultsBadge"></span>
@@ -125,22 +141,6 @@
       </div>
     </section>
 
-    <!-- Carte synthèse (résumés bruts + copier) -->
-    <section class="synthesis-card" id="synthesisCard" hidden>
-      <div class="synthesis-header">
-        <h2>Synthèse clinique</h2>
-        <span class="synthesis-badge" id="synthesisBadge"></span>
-      </div>
-
-      <div id="synthesisAbstracts"></div>
-
-      <div class="copy-section">
-        <button class="copy-btn" id="copyBtn">📋 Copier le contexte pour IA</button>
-        <span class="copy-confirm" id="copyConfirm" hidden>✓ Copié !</span>
-        <p class="copy-hint">Collez ce texte dans Claude.ai, ChatGPT ou tout autre assistant IA pour obtenir une synthèse rédigée.</p>
-      </div>
-    </section>
-
     <!-- Carte réponse Claude -->
     <section class="claude-card" id="claudeCard" hidden>
       <div class="synthesis-header">
@@ -148,7 +148,6 @@
         <span class="synthesis-badge" id="claudeBadge">Claude Sonnet</span>
       </div>
       <div class="claude-response" id="claudeResponse"></div>
-    </section>
     </section>
   </main>
 
