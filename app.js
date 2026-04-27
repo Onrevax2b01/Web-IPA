@@ -90,26 +90,21 @@ async function runSearch() {
  * the NCBI E-utilities API).
  */
 async function searchOpenEvidence(query) {
-  // Use PubMed E-utilities (free, CORS-enabled) as the data source, which is
-  // exactly what Open Evidence indexes for its clinical evidence layer.
-  const searchUrl =
-    `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi` +
-    `?db=pubmed&term=${encodeURIComponent(query)}&retmax=8&usehistory=y&format=json&retmode=json`;
+  try {
+    const searchRes = await fetchJSON(
+      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi` +
+      `?db=pubmed&term=${encodeURIComponent(query)}&retmax=8&retmode=json`
+    );
+    const ids = searchRes?.esearchresult?.idlist ?? [];
+    if (ids.length === 0) return buildOpenEvidenceFallback(query);
 
-  const searchRes = await fetchJSON(searchUrl);
-  const ids = searchRes?.esearchresult?.idlist ?? [];
+    const summaryRes = await fetchJSON(
+      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi` +
+      `?db=pubmed&id=${ids.join(',')}&retmode=json`
+    );
+    const result = summaryRes?.result ?? {};
 
-  if (ids.length === 0) return [];
-
-  const summaryUrl =
-    `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi` +
-    `?db=pubmed&id=${ids.join(',')}&retmode=json`;
-
-  const summaryRes = await fetchJSON(summaryUrl);
-  const result = summaryRes?.result ?? {};
-
-  return ids
-    .map((id) => {
+    const items = ids.map((id) => {
       const item = result[id];
       if (!item) return null;
       const authors = (item.authors ?? []).slice(0, 3).map((a) => a.name).join(', ');
@@ -117,151 +112,139 @@ async function searchOpenEvidence(query) {
         title: item.title || 'Sans titre',
         excerpt: [item.source, item.pubdate, authors].filter(Boolean).join(' · '),
         url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-        meta: [
-          { label: item.pubdate || '' },
-          { label: item.source || '' },
-        ],
+        meta: [{ label: item.pubdate || '' }, { label: item.source || '' }],
       };
-    })
-    .filter(Boolean);
+    }).filter(Boolean);
+
+    return items.length > 0 ? items : buildOpenEvidenceFallback(query);
+  } catch {
+    return buildOpenEvidenceFallback(query);
+  }
 }
 
-/**
- * HAS (Haute Autorité de Santé) — uses the HAS open search API / SOLR endpoint
- * exposed on their public portal. Falls back to a curated redirect if blocked.
- */
+function buildOpenEvidenceFallback(query) {
+  return [
+    {
+      title: `Rechercher "${query}" sur PubMed`,
+      excerpt: 'PubMed donne accès à plus de 35 millions de références d\'articles biomédicaux et sciences de la vie.',
+      url: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(query)}`,
+      meta: [{ label: 'PubMed – NCBI' }],
+    },
+    {
+      title: `Rechercher "${query}" sur Open Evidence`,
+      excerpt: 'Open Evidence synthétise la littérature médicale pour répondre aux questions cliniques.',
+      url: `https://www.openevidence.com/search?q=${encodeURIComponent(query)}`,
+      meta: [{ label: 'Open Evidence' }],
+    },
+    {
+      title: `Rechercher "${query}" sur Cochrane Library`,
+      excerpt: 'La Cochrane Library regroupe les meilleures revues systématiques et méta-analyses en santé.',
+      url: `https://www.cochranelibrary.com/search?searchBy=6&searchText=${encodeURIComponent(query)}`,
+      meta: [{ label: 'Cochrane Library' }],
+    },
+  ];
+}
+
 async function searchHAS(query) {
-  // The HAS SOLR search endpoint is publicly accessible (no auth required)
-  const url =
-    `https://www.has-sante.fr/jcms/fc_1249599/fr/search?text=${encodeURIComponent(query)}` +
-    `&_charset_=UTF-8&portal=jcms&type=fc_Recommandation,fc_RecommandationBonnesPratiques` +
-    `&nb=8&format=json`;
+  try {
+    const data = await fetchJSON(
+      `https://www.data.gouv.fr/api/1/datasets/?q=${encodeURIComponent('HAS ' + query)}&page_size=8`
+    );
+    const items = (data?.data ?? []).filter((d) =>
+      d.organization?.name?.toLowerCase().includes('has') ||
+      d.title?.toLowerCase().includes('has') ||
+      d.title?.toLowerCase().includes('recommandation')
+    );
+    if (items.length > 0) {
+      return items.map((item) => ({
+        title: item.title || 'Document HAS',
+        excerpt: item.description
+          ? stripHtml(item.description).slice(0, 220) + '…'
+          : 'Publication disponible sur data.gouv.fr',
+        url: item.page || 'https://www.has-sante.fr',
+        meta: [
+          { label: item.organization?.name ?? 'HAS' },
+          { label: item.last_modified ? fmtDate(item.last_modified) : '' },
+        ],
+      }));
+    }
+  } catch { /* fall through to static fallback */ }
 
-  // HAS does not expose a public JSON/REST API — we use an RSS/Atom feed trick
-  // via the HAS portal, or fall back to their documentation search.
-  // Since there is no open CORS JSON endpoint, we use the gouvernement open-data
-  // for HAS publications (data.gouv.fr dataset: recommandations-has).
-  const govUrl =
-    `https://www.data.gouv.fr/api/1/datasets/?q=${encodeURIComponent('recommandations HAS ' + query)}&page_size=8`;
-
-  const data = await fetchJSON(govUrl);
-  const items = data?.data ?? [];
-
-  if (items.length === 0) {
-    // Return a helpful placeholder directing to HAS directly
-    return buildHASFallback(query);
-  }
-
-  return items.map((item) => ({
-    title: item.title || 'Document HAS',
-    excerpt: item.description
-      ? stripHtml(item.description).slice(0, 200) + '…'
-      : 'Recommandation publiée sur data.gouv.fr',
-    url: item.page || `https://www.has-sante.fr`,
-    meta: [
-      { label: item.organization?.name ?? 'HAS' },
-      { label: item.last_modified ? fmtDate(item.last_modified) : '' },
-    ],
-  }));
+  return buildHASFallback(query);
 }
 
 function buildHASFallback(query) {
   return [
     {
       title: `Rechercher "${query}" sur le portail HAS`,
-      excerpt:
-        'La HAS publie ses recommandations de bonne pratique, guides du parcours de soins et fiches mémo sur son portail officiel.',
+      excerpt: 'La HAS publie ses recommandations de bonne pratique, guides du parcours de soins et fiches mémo.',
       url: `https://www.has-sante.fr/jcms/fc_1249599/fr/recherche?text=${encodeURIComponent(query)}`,
       meta: [{ label: 'HAS – Haute Autorité de Santé' }],
     },
     {
       title: `Rechercher "${query}" sur l'ANSM`,
-      excerpt:
-        'L'ANSM publie les recommandations de bon usage des médicaments et les décisions réglementaires.',
+      excerpt: "L'ANSM publie les recommandations de bon usage des médicaments et les décisions réglementaires.",
       url: `https://ansm.sante.fr/rechercher?queryText=${encodeURIComponent(query)}`,
       meta: [{ label: 'ANSM' }],
     },
     {
       title: `Rechercher "${query}" sur Ameli Pro`,
-      excerpt:
-        'Ameli Pro met à disposition les protocoles de soins, actes et nomenclatures pour les professionnels de santé.',
+      excerpt: 'Ameli Pro met à disposition les protocoles de soins et nomenclatures pour les professionnels de santé.',
       url: `https://www.ameli.fr/assure/recherche?keywords=${encodeURIComponent(query)}`,
       meta: [{ label: 'Ameli Pro – Assurance Maladie' }],
+    },
+    {
+      title: `Rechercher "${query}" sur VIDAL`,
+      excerpt: 'VIDAL propose des fiches pratiques et recommandations pour les professionnels de santé.',
+      url: `https://www.vidal.fr/recherche/index/?q=${encodeURIComponent(query)}`,
+      meta: [{ label: 'VIDAL' }],
     },
   ];
 }
 
-/**
- * Base de données publique des médicaments — API officielle (open data, CORS ok)
- * Source : https://base-donnees-publique.medicaments.gouv.fr/
- * L'API expose les spécialités, notices, RCP et données de remboursement.
- */
 async function searchMedicaments(query) {
-  // Primary: base-donnees-publique.medicaments.gouv.fr open API
-  const apiUrl =
-    `https://base-donnees-publique.medicaments.gouv.fr/api/v1/medicaments/recherche?` +
-    `query=${encodeURIComponent(query)}&limit=8`;
-
   try {
-    const data = await fetchJSON(apiUrl);
-    if (Array.isArray(data) && data.length > 0) {
-      return data.map(formatMedicamentItem);
+    const data = await fetchJSON(
+      `https://www.data.gouv.fr/api/1/datasets/?q=${encodeURIComponent(query)}&page_size=8&organization=534fff91a3a7292c64a77ede`
+    );
+    const items = data?.data ?? [];
+    if (items.length > 0) {
+      return [
+        ...items.map((item) => ({
+          title: item.title || 'Spécialité médicamenteuse',
+          excerpt: item.description
+            ? stripHtml(item.description).slice(0, 220) + '…'
+            : 'Données disponibles sur la base publique des médicaments.',
+          url: item.page || 'https://base-donnees-publique.medicaments.gouv.fr/',
+          meta: [{ label: 'ANSM – Base publique médicaments' }],
+        })),
+        ...buildMedicamentFallback(query),
+      ];
     }
-  } catch {
-    // API might be unavailable; fall through to open-data alternative
-  }
+  } catch { /* fall through */ }
 
-  // Fallback: data.gouv.fr dataset search for medicaments
-  const govUrl =
-    `https://www.data.gouv.fr/api/1/datasets/?q=${encodeURIComponent(query + ' médicament')}&page_size=6`;
-
-  const govData = await fetchJSON(govUrl);
-  const items = govData?.data ?? [];
-
-  if (items.length === 0) return buildMedicamentFallback(query);
-
-  const mapped = items.map((item) => ({
-    title: item.title || 'Médicament',
-    excerpt: item.description
-      ? stripHtml(item.description).slice(0, 200) + '…'
-      : 'Fiche disponible sur la base publique des médicaments.',
-    url: item.page || 'https://base-donnees-publique.medicaments.gouv.fr/',
-    meta: [{ label: item.organization?.name ?? 'ANSM' }],
-  }));
-
-  // Always append a direct search link
-  return [...mapped, ...buildMedicamentFallback(query)];
-}
-
-function formatMedicamentItem(item) {
-  const cis = item.cis ?? '';
-  return {
-    title: item.denomination || item.nomSpecialite || 'Spécialité médicamenteuse',
-    excerpt: [
-      item.formePharmaceutique,
-      item.voiesAdministration,
-      item.statutAdministratifAMM ? `AMM : ${item.statutAdministratifAMM}` : '',
-    ]
-      .filter(Boolean)
-      .join(' · '),
-    url: cis
-      ? `https://base-donnees-publique.medicaments.gouv.fr/affichageDoc.php?specid=${cis}&typedoc=R`
-      : 'https://base-donnees-publique.medicaments.gouv.fr/',
-    meta: [
-      { label: item.titulaire ?? '' },
-      { label: item.etatCommercialisation ?? '' },
-    ],
-  };
+  return buildMedicamentFallback(query);
 }
 
 function buildMedicamentFallback(query) {
   return [
     {
       title: `Rechercher "${query}" dans la base des médicaments`,
-      excerpt:
-        'La base de données publique des médicaments donne accès aux Résumés des Caractéristiques du Produit (RCP), notices et rapports d'évaluation.',
+      excerpt: "La base de données publique des médicaments donne accès aux RCP, notices et rapports d'évaluation.",
       url: `https://base-donnees-publique.medicaments.gouv.fr/recherche.php?specianame=${encodeURIComponent(query)}`,
       meta: [{ label: 'Base de données publique – ANSM / Min. Santé' }],
+    },
+    {
+      title: `Rechercher "${query}" sur VIDAL`,
+      excerpt: 'VIDAL propose les fiches de données de sécurité, posologies et interactions médicamenteuses.',
+      url: `https://www.vidal.fr/recherche/index/?q=${encodeURIComponent(query)}`,
+      meta: [{ label: 'VIDAL' }],
+    },
+    {
+      title: `Rechercher "${query}" sur Thériaque`,
+      excerpt: 'Thériaque est la base nationale d\'informations sur les médicaments disponibles en France.',
+      url: `https://www.theriaque.org/apps/recherche/rech_simple.php?UTIL=PRO&QUOI=SPECIALITE&NOM=${encodeURIComponent(query)}`,
+      meta: [{ label: 'Thériaque' }],
     },
   ];
 }
@@ -374,10 +357,22 @@ function flashInput() {
 
 // ── Utility ─────────────────────────────────────────────────────────────────
 
-async function fetchJSON(url) {
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`Erreur réseau (${res.status}) pour : ${url}`);
-  return res.json();
+async function fetchJSON(url, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Erreur réseau (${res.status})`);
+    return await res.json();
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('La requête a expiré (timeout). Vérifiez votre connexion.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function stripHtml(html) {
