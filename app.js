@@ -39,81 +39,97 @@ async function runSearch() {
       translationBox.hidden = false;
     }
 
-    // 2. DCI : si le terme traduit est un nom commercial, remplacer par la DCI
+    // 2. DCI : chercher un nom commercial mot par mot dans la phrase traduite
     let searchTerm = english || q;
-    const dci = await getDCI(searchTerm);
-    if (dci && dci.toLowerCase() !== searchTerm.toLowerCase()) {
-      dciNameEl.textContent = dci;
+    const dciResult = await findDCI(searchTerm);
+    if (dciResult) {
+      dciNameEl.textContent = dciResult.dci + ' (remplace : ' + dciResult.brand + ')';
       dciBox.hidden = false;
-      searchTerm = dci;
+      searchTerm = searchTerm.replace(new RegExp(dciResult.brand, 'gi'), dciResult.dci);
     }
 
-    // 3. Résolution des termes MeSH officiels
-    const meshTerms = await getMeSHTerms(searchTerm);
-    let pubmedQuery;
-    if (meshTerms.length > 0) {
-      showMeSHTerms(meshTerms);
-      pubmedQuery = meshTerms.map((t) => '"' + t + '"[MeSH Terms]').join(' AND ');
-    } else {
-      pubmedQuery = searchTerm;
-    }
+    // 3. Recherche PubMed — récupère IDs + termes MeSH traduits par PubMed lui-même
+    const { ids, meshTerms } = await searchPubMedWithMeSH(searchTerm);
+    if (meshTerms.length > 0) showMeSHTerms(meshTerms);
 
-    // 4. Recherche PubMed
-    const results = await searchPubMed(pubmedQuery);
-    renderResults(results, english || q, pubmedQuery);
+    // 4. Détails des articles
+    const results = await getArticleDetails(ids);
+    renderResults(results, english || q, searchTerm);
   } catch (err) {
     showError('Erreur : ' + (err.message || 'Impossible de contacter PubMed. Vérifiez votre connexion.'));
   }
 }
 
-// ── DCI lookup via RxNorm (NLM/NCBI, CORS ok) ───────────────────────────────
-// Détecte si le terme est un nom commercial (BN) et retourne la DCI (IN)
+// ── DCI : cherche un nom commercial mot par mot via RxNorm ───────────────────
 
-async function getDCI(term) {
-  try {
-    const data = await get(
-      'https://rxnav.nlm.nih.gov/REST/drugs.json?name=' + encodeURIComponent(term)
-    );
-    const groups = data?.drugGroup?.conceptGroup ?? [];
+const STOP_WORDS = new Set([
+  'the','of','in','and','or','for','use','with','during','after','before',
+  'at','by','from','to','on','an','a','is','are','was','were','have','has',
+  'management','treatment','therapy','patients','patient','adults','adult',
+  'role','effect','effects','impact','study','review','analysis','using',
+]);
 
-    // Si RxNorm identifie un nom de marque (BN), on cherche l'ingrédient (IN = DCI)
-    const hasBrand      = groups.some((g) => g.tty === 'BN' && g.conceptProperties?.length > 0);
-    const ingredientGrp = groups.find((g) => g.tty === 'IN' && g.conceptProperties?.length > 0);
+async function findDCI(sentence) {
+  const words = sentence.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
 
-    if (hasBrand && ingredientGrp) {
-      return ingredientGrp.conceptProperties[0].name.toLowerCase();
-    }
-  } catch { /* ignore */ }
+  for (const word of words.slice(0, 8)) {
+    try {
+      const data = await get(
+        'https://rxnav.nlm.nih.gov/REST/drugs.json?name=' + encodeURIComponent(word)
+      );
+      const groups = data?.drugGroup?.conceptGroup ?? [];
+      const hasBrand      = groups.some((g) => g.tty === 'BN' && g.conceptProperties?.length > 0);
+      const ingredientGrp = groups.find((g) => g.tty === 'IN'  && g.conceptProperties?.length > 0);
+      if (hasBrand && ingredientGrp) {
+        return { brand: word, dci: ingredientGrp.conceptProperties[0].name };
+      }
+    } catch { continue; }
+  }
   return null;
 }
 
-// ── MeSH term lookup via NCBI E-utilities ────────────────────────────────────
+// ── PubMed search + MeSH via translationset (1 seul appel API) ───────────────
+// PubMed retourne dans translationset les termes MeSH qu'il utilise lui-même
 
-async function getMeSHTerms(query) {
-  try {
-    const searchData = await get(
-      'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi' +
-      '?db=mesh&retmode=json&retmax=5&term=' + encodeURIComponent(query)
-    );
-    const ids = searchData?.esearchresult?.idlist ?? [];
-    if (ids.length === 0) return [];
+async function searchPubMedWithMeSH(query) {
+  const data = await get(
+    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi' +
+    '?db=pubmed&retmode=json&retmax=10&term=' + encodeURIComponent(query)
+  );
+  const result = data?.esearchresult ?? {};
+  const ids    = result.idlist ?? [];
 
-    const summaryData = await get(
-      'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi' +
-      '?db=mesh&retmode=json&id=' + ids.slice(0, 4).join(',')
-    );
-    const resultMap = summaryData?.result ?? {};
+  // Extraire les noms MeSH depuis les entrées comme "Aspirin"[MeSH Terms]
+  const meshTerms = [...new Set(
+    (result.translationset ?? [])
+      .flatMap((t) => [...(t.to || '').matchAll(/"([^"]+)"\[MeSH Terms\]/gi)].map((m) => m[1]))
+  )];
 
-    return ids.slice(0, 4)
-      .map((id) => {
-        const item = resultMap[id];
-        // NCBI peut retourner ds_name ou name selon la version de l'API
-        return item?.ds_name || item?.name || null;
-      })
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+  return { ids, meshTerms };
+}
+
+async function getArticleDetails(ids) {
+  if (ids.length === 0) return [];
+  const summaryData = await get(
+    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi' +
+    '?db=pubmed&retmode=json&id=' + ids.join(',')
+  );
+  const resultMap = summaryData?.result ?? {};
+  return ids.map((id) => {
+    const item = resultMap[id];
+    if (!item || typeof item !== 'object') return null;
+    return {
+      id,
+      title:   item.title   || 'Sans titre',
+      journal: item.source  || '',
+      year:    (item.pubdate || '').slice(0, 4),
+      authors: (item.authors ?? []).slice(0, 5).map((a) => a.name).join(', '),
+      url:     'https://pubmed.ncbi.nlm.nih.gov/' + id + '/',
+    };
+  }).filter(Boolean);
 }
 
 function showMeSHTerms(terms) {
@@ -151,40 +167,6 @@ async function translate(text) {
   } catch { /* recherche en texte original */ }
 
   return text;
-}
-
-// ── PubMed via NCBI E-utilities (CORS enabled, gratuit, sans clé) ────────────
-
-async function searchPubMed(query) {
-  // Étape 1 : récupérer les IDs
-  const searchData = await get(
-    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi' +
-    '?db=pubmed&retmode=json&retmax=10&term=' + encodeURIComponent(query)
-  );
-
-  const ids = searchData?.esearchresult?.idlist ?? [];
-  if (ids.length === 0) return [];
-
-  // Étape 2 : récupérer les détails
-  const summaryData = await get(
-    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi' +
-    '?db=pubmed&retmode=json&id=' + ids.join(',')
-  );
-
-  const resultMap = summaryData?.result ?? {};
-
-  return ids.map((id) => {
-    const item = resultMap[id];
-    if (!item || typeof item !== 'object') return null;
-    return {
-      id,
-      title:   item.title    || 'Sans titre',
-      journal: item.source   || '',
-      year:    (item.pubdate || '').slice(0, 4),
-      authors: (item.authors ?? []).slice(0, 5).map((a) => a.name).join(', '),
-      url:     'https://pubmed.ncbi.nlm.nih.gov/' + id + '/',
-    };
-  }).filter(Boolean);
 }
 
 // Fetch simple avec timeout 10s
