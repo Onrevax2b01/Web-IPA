@@ -15,8 +15,9 @@ const translatedQuery  = document.getElementById('translatedQuery');
 const meshBox          = document.getElementById('meshBox');
 const meshTermsEl      = document.getElementById('meshTerms');
 const dciBox           = document.getElementById('dciBox');
-const dciLabel         = document.getElementById('dciLabel');
 const dciNameEl        = document.getElementById('dciName');
+const conversionBox    = document.getElementById('conversionBox');
+const conversionText   = document.getElementById('conversionText');
 
 searchBtn.addEventListener('click', runSearch);
 queryEl.addEventListener('keydown', (e) => {
@@ -30,6 +31,7 @@ async function runSearch() {
   showLoading();
   translationBox.hidden = true;
   dciBox.hidden         = true;
+  conversionBox.hidden  = true;
   meshBox.hidden        = true;
 
   try {
@@ -46,13 +48,14 @@ async function runSearch() {
     if (dciResult) {
       const isBrandConversion = dciResult.dci.toLowerCase() !== dciResult.brand.toLowerCase();
       if (isBrandConversion) {
-        dciLabel.textContent  = 'Nom commercial → DCI :';
-        dciNameEl.textContent = dciResult.dci + ' (remplace ' + dciResult.brand + ')';
+        // Boîte rouge : nom commercial remplacé
+        conversionText.textContent = dciResult.brand + ' → ' + dciResult.dci;
+        conversionBox.hidden = false;
       } else {
-        dciLabel.textContent  = 'Principe actif (DCI) :';
+        // Boîte violette : principe actif déjà générique
         dciNameEl.textContent = dciResult.dci;
+        dciBox.hidden = false;
       }
-      dciBox.hidden = false;
       searchTerm = searchTerm.replace(new RegExp(dciResult.brand, 'gi'), dciResult.dci);
     }
 
