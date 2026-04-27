@@ -15,6 +15,7 @@ const translatedQuery  = document.getElementById('translatedQuery');
 const meshBox          = document.getElementById('meshBox');
 const meshTermsEl      = document.getElementById('meshTerms');
 const dciBox           = document.getElementById('dciBox');
+const dciLabel         = document.getElementById('dciLabel');
 const dciNameEl        = document.getElementById('dciName');
 
 searchBtn.addEventListener('click', runSearch);
@@ -39,11 +40,18 @@ async function runSearch() {
       translationBox.hidden = false;
     }
 
-    // 2. DCI : chercher un nom commercial mot par mot dans la phrase traduite
+    // 2. DCI : identifier le principe actif mot par mot
     let searchTerm = english || q;
     const dciResult = await findDCI(searchTerm);
     if (dciResult) {
-      dciNameEl.textContent = dciResult.dci + ' (remplace : ' + dciResult.brand + ')';
+      const isBrandConversion = dciResult.dci.toLowerCase() !== dciResult.brand.toLowerCase();
+      if (isBrandConversion) {
+        dciLabel.textContent  = 'Nom commercial → DCI :';
+        dciNameEl.textContent = dciResult.dci + ' (remplace ' + dciResult.brand + ')';
+      } else {
+        dciLabel.textContent  = 'Principe actif (DCI) :';
+        dciNameEl.textContent = dciResult.dci;
+      }
       dciBox.hidden = false;
       searchTerm = searchTerm.replace(new RegExp(dciResult.brand, 'gi'), dciResult.dci);
     }
@@ -81,9 +89,8 @@ async function findDCI(sentence) {
         'https://rxnav.nlm.nih.gov/REST/drugs.json?name=' + encodeURIComponent(word)
       );
       const groups = data?.drugGroup?.conceptGroup ?? [];
-      const hasBrand      = groups.some((g) => g.tty === 'BN' && g.conceptProperties?.length > 0);
-      const ingredientGrp = groups.find((g) => g.tty === 'IN'  && g.conceptProperties?.length > 0);
-      if (hasBrand && ingredientGrp) {
+      const ingredientGrp = groups.find((g) => g.tty === 'IN' && g.conceptProperties?.length > 0);
+      if (ingredientGrp) {
         return { brand: word, dci: ingredientGrp.conceptProperties[0].name };
       }
     } catch { continue; }
