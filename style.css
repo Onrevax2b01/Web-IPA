@@ -88,6 +88,31 @@ body {
   margin-right: .4rem;
 }
 
+.mesh-box {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  padding: .6rem 1rem;
+  font-size: .85rem;
+  color: #166534;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  align-items: center;
+}
+.mesh-label {
+  font-weight: 600;
+  margin-right: .2rem;
+}
+.mesh-tag {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  padding: .15rem .5rem;
+  font-size: .8rem;
+  font-weight: 600;
+}
+
 .search-btn {
   align-self: flex-start;
   background: var(--blue);

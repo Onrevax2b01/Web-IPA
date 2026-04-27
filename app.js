@@ -12,6 +12,8 @@ const resultsContainer = document.getElementById('resultsContainer');
 const externalLink     = document.getElementById('externalLink');
 const translationBox   = document.getElementById('translationBox');
 const translatedQuery  = document.getElementById('translatedQuery');
+const meshBox          = document.getElementById('meshBox');
+const meshTermsEl      = document.getElementById('meshTerms');
 
 searchBtn.addEventListener('click', runSearch);
 queryEl.addEventListener('keydown', (e) => {
@@ -24,18 +26,68 @@ async function runSearch() {
 
   showLoading();
   translationBox.hidden = true;
+  meshBox.hidden = true;
 
   try {
+    // 1. Traduction FR → EN
     const english = await translate(q);
     if (english && english.toLowerCase() !== q.toLowerCase()) {
       translatedQuery.textContent = english;
       translationBox.hidden = false;
     }
-    const results = await searchPubMed(english || q);
-    renderResults(results, english || q);
+
+    // 2. Résolution des termes MeSH officiels
+    const meshTerms = await getMeSHTerms(english || q);
+    let pubmedQuery;
+    if (meshTerms.length > 0) {
+      showMeSHTerms(meshTerms);
+      pubmedQuery = meshTerms.map((t) => '"' + t + '"[MeSH Terms]').join(' AND ');
+    } else {
+      pubmedQuery = english || q;
+    }
+
+    // 3. Recherche PubMed
+    const results = await searchPubMed(pubmedQuery);
+    renderResults(results, english || q, pubmedQuery);
   } catch (err) {
     showError('Erreur : ' + (err.message || 'Impossible de contacter PubMed. Vérifiez votre connexion.'));
   }
+}
+
+// ── MeSH term lookup via NCBI E-utilities ────────────────────────────────────
+
+async function getMeSHTerms(query) {
+  try {
+    const searchData = await get(
+      'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi' +
+      '?db=mesh&retmode=json&retmax=5&term=' + encodeURIComponent(query)
+    );
+    const ids = searchData?.esearchresult?.idlist ?? [];
+    if (ids.length === 0) return [];
+
+    const summaryData = await get(
+      'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi' +
+      '?db=mesh&retmode=json&id=' + ids.slice(0, 4).join(',')
+    );
+    const resultMap = summaryData?.result ?? {};
+
+    return ids.slice(0, 4)
+      .map((id) => resultMap[id]?.ds_name ?? null)
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function showMeSHTerms(terms) {
+  meshTermsEl.innerHTML = '';
+  terms.forEach((term) => {
+    const tag = document.createElement('span');
+    tag.className   = 'mesh-tag';
+    tag.textContent = term;
+    meshTermsEl.appendChild(tag);
+  });
+  meshBox.hidden = false;
 }
 
 // ── Traduction FR → EN via MyMemory (gratuit, sans clé) ─────────────────────
@@ -103,12 +155,12 @@ async function get(url) {
 
 // ── Rendu ────────────────────────────────────────────────────────────────────
 
-function renderResults(results, query) {
+function renderResults(results, displayQuery, pubmedQuery) {
   hideAll();
 
   resultsTitle.textContent  = 'Résultats PubMed';
   resultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
-  externalLink.href         = 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(query);
+  externalLink.href         = 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(pubmedQuery || displayQuery);
 
   resultsContainer.innerHTML = '';
 
