@@ -90,16 +90,29 @@ function showMeSHTerms(terms) {
   meshBox.hidden = false;
 }
 
-// ── Traduction FR → EN via MyMemory (gratuit, sans clé) ─────────────────────
+// ── Traduction FR → EN ───────────────────────────────────────────────────────
+// Priorité : Lingva (moteur Google Translate, meilleure qualité médicale)
+// Fallback  : MyMemory si Lingva est indisponible
 
 async function translate(text) {
+  // 1. Lingva Translate — qualité Google Translate, sans clé API
+  try {
+    const data = await get(
+      'https://lingva.ml/api/v1/fr/en/' + encodeURIComponent(text)
+    );
+    const translation = data?.translation;
+    if (translation) return translation;
+  } catch { /* fallback */ }
+
+  // 2. MyMemory — fallback
   try {
     const data = await get(
       'https://api.mymemory.translated.net/get?langpair=fr|en&q=' + encodeURIComponent(text)
     );
     const translation = data?.responseData?.translatedText;
     if (translation && data.responseStatus === 200) return translation;
-  } catch { /* si la traduction échoue, on cherche en français directement */ }
+  } catch { /* recherche en texte original */ }
+
   return text;
 }
 
@@ -161,6 +174,7 @@ function renderResults(results, displayQuery, pubmedQuery) {
   resultsTitle.textContent  = 'Résultats PubMed';
   resultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
   externalLink.href         = 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(pubmedQuery || displayQuery);
+  externalLink.textContent  = 'Voir tous les résultats sur PubMed →';
 
   resultsContainer.innerHTML = '';
 
