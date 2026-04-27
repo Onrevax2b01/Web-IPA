@@ -10,6 +10,8 @@ const resultsTitle     = document.getElementById('resultsTitle');
 const resultsBadge     = document.getElementById('resultsBadge');
 const resultsContainer = document.getElementById('resultsContainer');
 const externalLink     = document.getElementById('externalLink');
+const translationBox   = document.getElementById('translationBox');
+const translatedQuery  = document.getElementById('translatedQuery');
 
 searchBtn.addEventListener('click', runSearch);
 queryEl.addEventListener('keydown', (e) => {
@@ -21,13 +23,32 @@ async function runSearch() {
   if (!q) { flashInput(); return; }
 
   showLoading();
+  translationBox.hidden = true;
 
   try {
-    const results = await searchPubMed(q);
-    renderResults(results, q);
+    const english = await translate(q);
+    if (english && english.toLowerCase() !== q.toLowerCase()) {
+      translatedQuery.textContent = english;
+      translationBox.hidden = false;
+    }
+    const results = await searchPubMed(english || q);
+    renderResults(results, english || q);
   } catch (err) {
     showError('Erreur : ' + (err.message || 'Impossible de contacter PubMed. Vérifiez votre connexion.'));
   }
+}
+
+// ── Traduction FR → EN via MyMemory (gratuit, sans clé) ─────────────────────
+
+async function translate(text) {
+  try {
+    const data = await get(
+      'https://api.mymemory.translated.net/get?langpair=fr|en&q=' + encodeURIComponent(text)
+    );
+    const translation = data?.responseData?.translatedText;
+    if (translation && data.responseStatus === 200) return translation;
+  } catch { /* si la traduction échoue, on cherche en français directement */ }
+  return text;
 }
 
 // ── PubMed via NCBI E-utilities (CORS enabled, gratuit, sans clé) ────────────

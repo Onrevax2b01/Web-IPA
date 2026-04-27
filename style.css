@@ -75,6 +75,19 @@ body {
 }
 .search-hint { font-size: .8rem; color: var(--muted); }
 
+.translation-box {
+  background: var(--blue-light);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: .6rem 1rem;
+  font-size: .85rem;
+  color: #1e40af;
+}
+.translation-label {
+  font-weight: 600;
+  margin-right: .4rem;
+}
+
 .search-btn {
   align-self: flex-start;
   background: var(--blue);
