@@ -14,6 +14,8 @@ const translationBox   = document.getElementById('translationBox');
 const translatedQuery  = document.getElementById('translatedQuery');
 const meshBox          = document.getElementById('meshBox');
 const meshTermsEl      = document.getElementById('meshTerms');
+const dciBox           = document.getElementById('dciBox');
+const dciNameEl        = document.getElementById('dciName');
 
 searchBtn.addEventListener('click', runSearch);
 queryEl.addEventListener('keydown', (e) => {
@@ -26,7 +28,8 @@ async function runSearch() {
 
   showLoading();
   translationBox.hidden = true;
-  meshBox.hidden = true;
+  dciBox.hidden         = true;
+  meshBox.hidden        = true;
 
   try {
     // 1. Traduction FR → EN
@@ -36,22 +39,52 @@ async function runSearch() {
       translationBox.hidden = false;
     }
 
-    // 2. Résolution des termes MeSH officiels
-    const meshTerms = await getMeSHTerms(english || q);
+    // 2. DCI : si le terme traduit est un nom commercial, remplacer par la DCI
+    let searchTerm = english || q;
+    const dci = await getDCI(searchTerm);
+    if (dci && dci.toLowerCase() !== searchTerm.toLowerCase()) {
+      dciNameEl.textContent = dci;
+      dciBox.hidden = false;
+      searchTerm = dci;
+    }
+
+    // 3. Résolution des termes MeSH officiels
+    const meshTerms = await getMeSHTerms(searchTerm);
     let pubmedQuery;
     if (meshTerms.length > 0) {
       showMeSHTerms(meshTerms);
       pubmedQuery = meshTerms.map((t) => '"' + t + '"[MeSH Terms]').join(' AND ');
     } else {
-      pubmedQuery = english || q;
+      pubmedQuery = searchTerm;
     }
 
-    // 3. Recherche PubMed
+    // 4. Recherche PubMed
     const results = await searchPubMed(pubmedQuery);
     renderResults(results, english || q, pubmedQuery);
   } catch (err) {
     showError('Erreur : ' + (err.message || 'Impossible de contacter PubMed. Vérifiez votre connexion.'));
   }
+}
+
+// ── DCI lookup via RxNorm (NLM/NCBI, CORS ok) ───────────────────────────────
+// Détecte si le terme est un nom commercial (BN) et retourne la DCI (IN)
+
+async function getDCI(term) {
+  try {
+    const data = await get(
+      'https://rxnav.nlm.nih.gov/REST/drugs.json?name=' + encodeURIComponent(term)
+    );
+    const groups = data?.drugGroup?.conceptGroup ?? [];
+
+    // Si RxNorm identifie un nom de marque (BN), on cherche l'ingrédient (IN = DCI)
+    const hasBrand      = groups.some((g) => g.tty === 'BN' && g.conceptProperties?.length > 0);
+    const ingredientGrp = groups.find((g) => g.tty === 'IN' && g.conceptProperties?.length > 0);
+
+    if (hasBrand && ingredientGrp) {
+      return ingredientGrp.conceptProperties[0].name.toLowerCase();
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 // ── MeSH term lookup via NCBI E-utilities ────────────────────────────────────
@@ -72,7 +105,11 @@ async function getMeSHTerms(query) {
     const resultMap = summaryData?.result ?? {};
 
     return ids.slice(0, 4)
-      .map((id) => resultMap[id]?.ds_name ?? null)
+      .map((id) => {
+        const item = resultMap[id];
+        // NCBI peut retourner ds_name ou name selon la version de l'API
+        return item?.ds_name || item?.name || null;
+      })
       .filter(Boolean);
   } catch {
     return [];

@@ -88,6 +88,17 @@ body {
   margin-right: .4rem;
 }
 
+.dci-box {
+  background: #fdf4ff;
+  border: 1px solid #d8b4fe;
+  border-radius: 8px;
+  padding: .6rem 1rem;
+  font-size: .85rem;
+  color: #6b21a8;
+}
+.dci-label { font-weight: 600; margin-right: .4rem; }
+.dci-name  { font-style: italic; }
+
 .mesh-box {
   background: #f0fdf4;
   border: 1px solid #86efac;
