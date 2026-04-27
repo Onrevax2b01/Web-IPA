@@ -28,12 +28,14 @@ const synthesisBadge     = document.getElementById('synthesisBadge');
 const synthesisAbstracts = document.getElementById('synthesisAbstracts');
 const copyBtn            = document.getElementById('copyBtn');
 const copyConfirm        = document.getElementById('copyConfirm');
-const claudeBtn          = document.getElementById('claudeBtn');
-const claudeCard         = document.getElementById('claudeCard');
-const claudeResponse     = document.getElementById('claudeResponse');
-const apiKeySection      = document.getElementById('apiKeySection');
-const apiKeyInput        = document.getElementById('apiKeyInput');
-const saveKeyBtn         = document.getElementById('saveKeyBtn');
+const claudeBtn    = document.getElementById('claudeBtn');
+const claudeCard   = document.getElementById('claudeCard');
+const claudeResponse = document.getElementById('claudeResponse');
+const limitBox     = document.getElementById('limitBox');
+const apiKeySection = document.getElementById('apiKeySection');
+const apiKeyInput  = document.getElementById('apiKeyInput');
+const saveKeyBtn   = document.getElementById('saveKeyBtn');
+const clearKeyBtn  = document.getElementById('clearKeyBtn');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -74,6 +76,12 @@ synthesisBtn.addEventListener('click', generateSynthesis);
 copyBtn.addEventListener('click', copyContext);
 claudeBtn.addEventListener('click', handleClaudeBtn);
 saveKeyBtn.addEventListener('click', saveApiKey);
+clearKeyBtn.addEventListener('click', () => {
+  localStorage.removeItem('ipa_anthropic_key');
+  apiKeyInput.value = '';
+  apiKeySection.hidden = true;
+  limitBox.hidden = true;
+});
 
 // Pré-remplir la clé si déjà enregistrée
 const storedKey = localStorage.getItem('ipa_anthropic_key');
@@ -164,13 +172,15 @@ async function applyFilters() {
 // ── Claude IA ─────────────────────────────────────────────────────────────────
 
 function handleClaudeBtn() {
-  const key = localStorage.getItem('ipa_anthropic_key');
-  if (!key) {
-    apiKeySection.hidden = false;
-    apiKeyInput.focus();
-    return;
+  limitBox.hidden = true;
+  const ownKey = localStorage.getItem('ipa_anthropic_key');
+  if (ownKey) {
+    // Clé API déjà enregistrée → utiliser directement
+    runWithApiKey(ownKey);
+  } else {
+    // Essayer d'abord via Puter (gratuit)
+    runWithPuter();
   }
-  runClaudeSynthesis(key);
 }
 
 function saveApiKey() {
@@ -182,10 +192,70 @@ function saveApiKey() {
   }
   localStorage.setItem('ipa_anthropic_key', key);
   apiKeySection.hidden = true;
-  runClaudeSynthesis(key);
+  runWithApiKey(key);
 }
 
-async function runClaudeSynthesis(apiKey) {
+// ── Option 1 : Puter.js (gratuit, compte Puter requis) ───────────────────────
+
+async function runWithPuter() {
+  if (currentArticleIds.length === 0) return;
+  claudeBtn.disabled = true;
+  claudeCard.hidden  = true;
+  showLoading('Connexion à Claude gratuit via Puter…');
+
+  try {
+    await loadPuter();
+    const abstracts = await fetchAbstracts(currentArticleIds.slice(0, 8));
+    showLoading('Génération de la synthèse par Claude…');
+
+    const prompt   = buildPrompt(currentDisplayQuery, abstracts);
+    // puter.ai.chat retourne un objet ; le texte est dans message.content
+    const res      = await puter.ai.chat(prompt, { model: 'claude-sonnet-4-5' });
+    const text     = res?.message?.content?.[0]?.text
+                  ?? res?.message?.content
+                  ?? String(res);
+
+    hideAll();
+    resultsSection.hidden = false;
+    filterCard.hidden     = false;
+    claudeResponse.innerHTML = markdownToHtml(text);
+    claudeCard.hidden = false;
+    claudeCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    hideAll();
+    resultsSection.hidden = false;
+    filterCard.hidden     = false;
+
+    // Limite atteinte ou quota dépassé → proposer la clé API
+    const isLimit = /limit|rate|quota|429/i.test(err.message || '');
+    if (isLimit) {
+      limitBox.hidden     = false;
+      apiKeySection.hidden = false;
+      apiKeyInput.focus();
+    } else {
+      // Autre erreur Puter → aussi proposer la clé API
+      limitBox.hidden     = false;
+      apiKeySection.hidden = false;
+    }
+  } finally {
+    claudeBtn.disabled = false;
+  }
+}
+
+function loadPuter() {
+  if (window.puter) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://js.puter.com/v2/';
+    s.onload  = resolve;
+    s.onerror = () => reject(new Error('Impossible de charger Puter.js'));
+    document.head.appendChild(s);
+  });
+}
+
+// ── Option 2 : Clé API Anthropic personnelle ─────────────────────────────────
+
+async function runWithApiKey(apiKey) {
   if (currentArticleIds.length === 0) return;
   claudeBtn.disabled = true;
   claudeCard.hidden  = true;
@@ -193,14 +263,15 @@ async function runClaudeSynthesis(apiKey) {
 
   try {
     const abstracts = await fetchAbstracts(currentArticleIds.slice(0, 8));
+    showLoading('Génération de la synthèse par Claude…');
+
+    const prompt   = buildPrompt(currentDisplayQuery, abstracts);
+    const text     = await callClaudeAPI(apiKey, prompt);
+
     hideAll();
     resultsSection.hidden = false;
     filterCard.hidden     = false;
-
-    const prompt = buildPrompt(currentDisplayQuery, abstracts);
-    const response = await callClaude(apiKey, prompt);
-
-    claudeResponse.innerHTML = markdownToHtml(response);
+    claudeResponse.innerHTML = markdownToHtml(text);
     claudeCard.hidden = false;
     claudeCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
@@ -212,7 +283,7 @@ async function runClaudeSynthesis(apiKey) {
   }
 }
 
-async function callClaude(apiKey, prompt) {
+async function callClaudeAPI(apiKey, prompt) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {

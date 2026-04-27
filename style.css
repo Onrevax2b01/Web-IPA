@@ -330,9 +330,7 @@ body {
   background: #fff;
 }
 .api-key-inner input:focus { outline: none; border-color: var(--purple); }
-.save-key-btn {
-  background: var(--purple);
-  color: #fff;
+.save-key-btn, .clear-key-btn {
   border: none;
   border-radius: 6px;
   padding: .45rem 1rem;
@@ -341,9 +339,22 @@ body {
   cursor: pointer;
   white-space: nowrap;
 }
-.save-key-btn:hover { background: #581c87; }
+.save-key-btn  { background: var(--purple); color: #fff; }
+.save-key-btn:hover  { background: #581c87; }
+.clear-key-btn { background: var(--red-bg); color: var(--red); border: 1px solid #fca5a5; }
+.clear-key-btn:hover { background: #fee2e2; }
+
 .api-key-hint { font-size: .78rem; color: var(--purple); }
 .api-key-hint a { color: var(--purple); font-weight: 600; }
+
+.limit-box {
+  background: var(--orange-bg);
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  padding: .75rem 1rem;
+  font-size: .85rem;
+  color: var(--orange);
+}
 
 /* ── Claude card ── */
 .claude-card {

@@ -94,15 +94,21 @@
         <button class="claude-btn" id="claudeBtn">🤖 Résumé par Claude IA</button>
       </div>
 
+      <!-- Message limite atteinte -->
+      <div class="limit-box" id="limitBox" hidden>
+        <p>⚠️ <strong>Limite gratuite atteinte.</strong> Entrez votre clé API Anthropic pour continuer à utiliser Claude IA.</p>
+      </div>
+
       <!-- Clé API Anthropic (masquée par défaut) -->
       <div class="api-key-section" id="apiKeySection" hidden>
         <div class="api-key-inner">
           <label for="apiKeyInput">Clé API Anthropic :</label>
           <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-…" autocomplete="off" />
           <button class="save-key-btn" id="saveKeyBtn">Enregistrer</button>
+          <button class="clear-key-btn" id="clearKeyBtn">Supprimer la clé</button>
         </div>
         <p class="api-key-hint">
-          Votre clé est stockée uniquement dans votre navigateur et envoyée directement à Anthropic.
+          Votre clé est stockée uniquement dans votre navigateur.
           <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Obtenir une clé →</a>
         </p>
       </div>
