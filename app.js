@@ -753,9 +753,9 @@ function deinterrogativize(text) {
   return q.charAt(0).toUpperCase() + q.slice(1);
 }
 
-// ── HAS Search ────────────────────────────────────────────────────────────────
+// ── HAS Search via LiSSa ─────────────────────────────────────────────────────
 
-const HAS_DATASET_API = 'https://www.data.gouv.fr/api/1/datasets/metadonnees-des-publications-de-la-has-1/';
+const LISSA_URL = 'https://www.lissa.fr/dc/elements/';
 
 async function runHasSearch() {
   const raw = queryEl.value.trim();
@@ -764,109 +764,72 @@ async function runHasSearch() {
   const q = deinterrogativize(raw);
   currentHasQuery = q;
 
-  showLoading('Chargement des recommandations HAS…');
+  showLoading('Recherche dans les recommandations HAS via LiSSa…');
   hideInfoBoxes();
 
   try {
-    const data = await loadHasData();
-    const results = searchHasData(data, q);
+    const results = await searchLissa(q);
     renderHasResults(results, q);
   } catch (err) {
-    showError('Erreur HAS : ' + err.message);
+    showError('Erreur LiSSa : ' + err.message);
   }
 }
 
-async function loadHasData() {
-  if (hasDataCache) return hasDataCache;
+async function searchLissa(query) {
+  const url = LISSA_URL + '?query=' + encodeURIComponent(query) + '&nb=10';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const c = sessionStorage.getItem('ipa_has_v2');
-    if (c) { hasDataCache = JSON.parse(c); return hasDataCache; }
-  } catch { /* ignore */ }
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
 
-  showLoading('Chargement du catalogue HAS…');
+    const text = await res.text();
 
-  const dataset = await get(HAS_DATASET_API, 15000);
-  const resources = dataset.resources || [];
+    // LiSSa renvoie du XML — on parse
+    if (text.trim().startsWith('<')) {
+      return parseLissaXML(text);
+    }
+    // Fallback JSON
+    const data = JSON.parse(text);
+    return Array.isArray(data) ? data : (data.items || data.results || []);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-  const csvRes = resources.find(r => {
-    const url = (r.url || '').toLowerCase();
-    const fmt = (r.format || '').toLowerCase();
-    return (fmt === 'csv' || url.endsWith('.csv')) && !url.includes('schema');
+function parseLissaXML(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const items = doc.querySelectorAll('item, record, element, result, doc');
+  if (!items.length) return [];
+
+  return Array.from(items).map(el => {
+    const get = tag => el.querySelector(tag)?.textContent?.trim() || '';
+    return {
+      title:  get('title') || get('titre') || get('name') || get('dc\:title') || 'Sans titre',
+      url:    get('link')  || get('url')   || get('uri')  || get('dc\:identifier') || '',
+      source: get('source')|| get('journal')|| get('dc\:source') || '',
+      date:   get('date')  || get('year')  || get('dc\:date') || '',
+      type:   get('type')  || get('dc\:type') || '',
+    };
   });
-
-  if (!csvRes) throw new Error('Fichier CSV HAS introuvable');
-
-  showLoading('Téléchargement des publications HAS (première fois uniquement)…');
-  const csvText = await getText(csvRes.url, 30000);
-  const data = parseCSV(csvText);
-
-  hasDataCache = data;
-  try { sessionStorage.setItem('ipa_has_v2', JSON.stringify(data)); } catch { /* plein */ }
-  return data;
-}
-
-function parseCSV(text) {
-  const lines = text.split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const firstLine = lines[0];
-  const sep = (firstLine.match(/;/g) || []).length >= (firstLine.match(/,/g) || []).length ? ';' : ',';
-  const headers = parseCSVLine(firstLine, sep).map(h => h.toLowerCase().trim().replace(/^"|"$/g, ''));
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    const vals = parseCSVLine(lines[i], sep);
-    const obj = {};
-    headers.forEach((h, idx) => { obj[h] = (vals[idx] || '').replace(/^"|"$/g, '').trim(); });
-    rows.push(obj);
-  }
-  return rows;
-}
-
-function parseCSVLine(line, sep) {
-  const result = [];
-  let cur = '', inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
-      else inQ = !inQ;
-    } else if (ch === sep && !inQ) {
-      result.push(cur); cur = '';
-    } else cur += ch;
-  }
-  result.push(cur);
-  return result;
-}
-
-function searchHasData(data, query) {
-  const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const keywords = norm(query).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3);
-
-  if (!keywords.length) return data.slice(0, 10);
-
-  return data
-    .map(item => {
-      const allText = norm(Object.values(item).join(' '));
-      const score   = keywords.filter(k => allText.includes(k)).length;
-      return { ...item, _score: score };
-    })
-    .filter(i => i._score > 0)
-    .sort((a, b) => b._score - a._score)
-    .slice(0, 10);
 }
 
 function renderHasResults(results, query) {
   hideAll();
 
-  hasResultsTitle.textContent  = 'Recommandations HAS';
+  hasResultsTitle.textContent  = 'Recommandations — LiSSa';
   hasResultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
   currentHasResults = results;
   hasResultsContainer.innerHTML = '';
 
   if (results.length === 0) {
+    // Fallback : lien direct vers HAS
     hasResultsContainer.innerHTML =
-      '<p style="color:var(--muted);font-size:.9rem">Aucune recommandation HAS trouvée. Essayez d\'autres mots-clés.</p>';
+      '<p style="color:var(--muted);font-size:.9rem">Aucun résultat LiSSa. ' +
+      '<a href="https://www.has-sante.fr/jcms/fc_1249603/fr/recherche?text=' +
+      encodeURIComponent(query) + '" target="_blank" rel="noopener" style="color:#0e7490;font-weight:600">' +
+      'Rechercher directement sur has-sante.fr →</a></p>';
   } else {
     results.forEach(r => hasResultsContainer.appendChild(buildHasCard(r)));
   }
@@ -876,19 +839,17 @@ function renderHasResults(results, query) {
 }
 
 function buildHasCard(r) {
-  const title = r['title'] || r['label'] || r['titre_fr'] || r['titre'] || r['nom'] || 'Sans titre';
-  const id    = r['id'] || r['cid'] || '';
-  const url   = id ? 'https://www.has-sante.fr/jcms/' + id : (r['url'] || r['lien'] || '#');
-  const type  = r['type'] || r['typeName'] || r['type_de_publication'] || '';
-  const theme = r['category'] || r['thematique'] || r['domaine'] || '';
-  const date  = r['pdate'] || r['date_de_mise_en_ligne'] || r['date'] || '';
+  const title  = r.title  || r['titre_fr'] || r['titre'] || 'Sans titre';
+  const url    = r.url    || r['lien'] || '';
+  const source = r.source || r['type_de_publication'] || '';
+  const date   = r.date   || r['date_de_mise_en_ligne'] || '';
 
   const card = document.createElement('div');
   card.className = 'has-result-item';
 
   const titleEl = document.createElement('div');
   titleEl.className = 'result-title';
-  if (url && url !== '#') {
+  if (url) {
     const a = document.createElement('a');
     a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.textContent = title;
@@ -900,18 +861,18 @@ function buildHasCard(r) {
 
   const meta = document.createElement('div');
   meta.className = 'result-meta';
-  [type, theme, date].filter(Boolean).forEach(label => {
+  [source, date].filter(Boolean).forEach(label => {
     const tag = document.createElement('span');
     tag.className = 'tag'; tag.textContent = label;
     meta.appendChild(tag);
   });
   if (meta.childNodes.length) card.appendChild(meta);
 
-  if (url && url !== '#') {
+  if (url) {
     const link = document.createElement('a');
     link.className = 'result-link'; link.href = url;
     link.target = '_blank'; link.rel = 'noopener noreferrer';
-    link.textContent = 'Lire sur has-sante.fr →';
+    link.textContent = 'Lire le document →';
     card.appendChild(link);
   }
 
