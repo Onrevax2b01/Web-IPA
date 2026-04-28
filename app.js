@@ -748,6 +748,8 @@ function deinterrogativize(text) {
 
 // ── HAS Search ────────────────────────────────────────────────────────────────
 
+const HAS_DATA_URL = 'https://www.data.gouv.fr/api/1/datasets/r/1c9d50d3-b98f-45d6-8d88-94b478a25724';
+
 async function runHasSearch() {
   const raw = queryEl.value.trim();
   if (!raw) { flashInput(); return; }
@@ -755,43 +757,54 @@ async function runHasSearch() {
   const q = deinterrogativize(raw);
   currentHasQuery = q;
 
-  showLoading('Recherche dans les recommandations HAS…');
+  showLoading('Chargement des recommandations HAS…');
   hideInfoBoxes();
 
   try {
-    const results = await searchHasAPI(q);
+    const data = await loadHasData();
+    const results = searchHasData(data, q);
     renderHasResults(results, q);
   } catch (err) {
     showError('Erreur HAS : ' + err.message);
   }
 }
 
-async function searchHasAPI(query) {
-  const url =
-    'https://www.has-sante.fr/rest/search' +
-    '?text=' + encodeURIComponent(query) +
-    '&langs=fr&pageSize=10';
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+async function loadHasData() {
+  if (hasDataCache) return hasDataCache;
 
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'Accept': 'application/json' },
-    });
-    if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
-    const data = await res.json();
-    console.log('[HAS] réponse brute :', JSON.stringify(data).slice(0, 500));
-    // Jalios : tableau direct ou objet paginé
-    const items = Array.isArray(data)
-      ? data
-      : (data.items || data.data || data.results || data.result || data.content || data.objects || []);
-    console.log('[HAS] items extraits :', items.length, items[0]);
-    return items;
-  } finally {
-    clearTimeout(timer);
-  }
+    const c = sessionStorage.getItem('ipa_has');
+    if (c) { hasDataCache = JSON.parse(c); return hasDataCache; }
+  } catch { /* ignore */ }
+
+  showLoading('Téléchargement du catalogue HAS (première fois uniquement)…');
+  const raw = await get(HAS_DATA_URL, 30000);
+
+  // Le JSON peut être un tableau ou un objet — on trouve le premier tableau
+  const data = Array.isArray(raw)
+    ? raw
+    : Object.values(raw).find(v => Array.isArray(v)) || [];
+
+  hasDataCache = data;
+  try { sessionStorage.setItem('ipa_has', JSON.stringify(data)); } catch { /* plein */ }
+  return data;
+}
+
+function searchHasData(data, query) {
+  const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const keywords = norm(query).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3);
+
+  if (!keywords.length) return data.slice(0, 10);
+
+  return data
+    .map(item => {
+      const allText = norm(Object.values(item).join(' '));
+      const score   = keywords.filter(k => allText.includes(k)).length;
+      return { ...item, _score: score };
+    })
+    .filter(i => i._score > 0)
+    .sort((a, b) => b._score - a._score)
+    .slice(0, 10);
 }
 
 function renderHasResults(results, query) {
