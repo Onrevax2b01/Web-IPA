@@ -37,6 +37,16 @@ const apiKeyInput  = document.getElementById('apiKeyInput');
 const saveKeyBtn   = document.getElementById('saveKeyBtn');
 const clearKeyBtn  = document.getElementById('clearKeyBtn');
 
+// HAS elements
+const hasSearchBtn        = document.getElementById('hasSearchBtn');
+const hasResultsSection   = document.getElementById('hasResultsSection');
+const hasResultsTitle     = document.getElementById('hasResultsTitle');
+const hasResultsBadge     = document.getElementById('hasResultsBadge');
+const hasResultsContainer = document.getElementById('hasResultsContainer');
+const hasClaudeBtn        = document.getElementById('hasClaudeBtn');
+const hasClaudeCard       = document.getElementById('hasClaudeCard');
+const hasClaudeResponse   = document.getElementById('hasClaudeResponse');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let currentPubmedQuery = '';
@@ -45,9 +55,15 @@ let currentArticleIds  = [];
 let activeFilter       = '';
 let activePeriod       = 0;
 
+let hasDataCache      = null;
+let currentHasResults = [];
+let currentHasQuery   = '';
+let pendingClaudeCtx  = 'pubmed'; // 'pubmed' | 'has'
+
 // ── Events ───────────────────────────────────────────────────────────────────
 
 searchBtn.addEventListener('click', runSearch);
+hasSearchBtn.addEventListener('click', runHasSearch);
 queryEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runSearch();
 });
@@ -74,7 +90,8 @@ document.querySelectorAll('.period-btn').forEach((btn) => {
 
 synthesisBtn.addEventListener('click', generateSynthesis);
 copyBtn.addEventListener('click', copyContext);
-claudeBtn.addEventListener('click', handleClaudeBtn);
+claudeBtn.addEventListener('click', () => { pendingClaudeCtx = 'pubmed'; handleClaudeBtn(); });
+hasClaudeBtn.addEventListener('click', () => { pendingClaudeCtx = 'has'; handleClaudeBtn(); });
 saveKeyBtn.addEventListener('click', saveApiKey);
 clearKeyBtn.addEventListener('click', () => {
   localStorage.removeItem('ipa_anthropic_key');
@@ -90,8 +107,9 @@ if (storedKey) apiKeyInput.value = storedKey;
 // ── Recherche principale ──────────────────────────────────────────────────────
 
 async function runSearch() {
-  const q = queryEl.value.trim();
-  if (!q) { flashInput(); return; }
+  const raw = queryEl.value.trim();
+  if (!raw) { flashInput(); return; }
+  const q = deinterrogativize(raw);
 
   // Réinitialiser les filtres
   activeFilter = '';
@@ -175,11 +193,11 @@ function handleClaudeBtn() {
   limitBox.hidden = true;
   const ownKey = localStorage.getItem('ipa_anthropic_key');
   if (ownKey) {
-    // Clé API déjà enregistrée → utiliser directement
-    runWithApiKey(ownKey);
+    if (pendingClaudeCtx === 'has') runHasWithApiKey(ownKey);
+    else runWithApiKey(ownKey);
   } else {
-    // Essayer d'abord via Puter (gratuit)
-    runWithPuter();
+    if (pendingClaudeCtx === 'has') runHasWithPuter();
+    else runWithPuter();
   }
 }
 
@@ -192,7 +210,8 @@ function saveApiKey() {
   }
   localStorage.setItem('ipa_anthropic_key', key);
   apiKeySection.hidden = true;
-  runWithApiKey(key);
+  if (pendingClaudeCtx === 'has') runHasWithApiKey(key);
+  else runWithApiKey(key);
 }
 
 // ── Option 1 : Puter.js (gratuit, compte Puter requis) ───────────────────────
@@ -624,12 +643,14 @@ function showLoading(msg) {
 }
 
 function hideAll() {
-  loadingEl.hidden      = true;
-  errorBox.hidden       = true;
-  resultsSection.hidden = true;
-  filterCard.hidden     = true;
-  synthesisCard.hidden  = true;
-  claudeCard.hidden     = true;
+  loadingEl.hidden         = true;
+  errorBox.hidden          = true;
+  resultsSection.hidden    = true;
+  filterCard.hidden        = true;
+  synthesisCard.hidden     = true;
+  claudeCard.hidden        = true;
+  hasResultsSection.hidden = true;
+  hasClaudeCard.hidden     = true;
 }
 
 function hideInfoBoxes() {
@@ -678,4 +699,312 @@ async function get(url, timeoutMs = 10000) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function getText(url, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
+    return await res.text();
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Délai dépassé.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Désinterrogativisation ────────────────────────────────────────────────────
+
+function deinterrogativize(text) {
+  let q = text.trim().replace(/\s*\?+\s*$/, '');
+
+  const patterns = [
+    /^qu['']est-ce\s+qu['']?\s*/i,
+    /^qu['']est-ce\s+que\s+/i,
+    /^est-ce\s+qu['']?\s*/i,
+    /^est-ce\s+que\s+/i,
+    /^quelles\s+sont\s+(les\s+|l[''])?/i,
+    /^quels\s+sont\s+(les\s+|l[''])?/i,
+    /^quelle\s+est\s+(la\s+|l['']|le\s+)?/i,
+    /^quel\s+est\s+(la\s+|l['']|le\s+)?/i,
+    /^quelle\s+/i,
+    /^quels?\s+/i,
+    /^comment\s+(faire\s+pour\s+|gérer\s+|traiter\s+|prendre\s+en\s+charge\s+)?/i,
+    /^pourquoi\s+/i,
+    /^quand\s+/i,
+    /^y\s+a-t-il\s+/i,
+    /^dans\s+quel\s+cas\s+/i,
+  ];
+
+  for (const p of patterns) {
+    if (p.test(q)) { q = q.replace(p, ''); break; }
+  }
+
+  return q.charAt(0).toUpperCase() + q.slice(1);
+}
+
+// ── HAS Search ────────────────────────────────────────────────────────────────
+
+const HAS_STOP_FR = new Set([
+  'le','la','les','de','du','des','un','une','et','ou','en','au','aux',
+  'par','pour','sur','dans','avec','sans','que','qui','est','sont',
+  'plus','très','bien','tout','tous','cette','ces','son','sa','ses',
+]);
+
+async function runHasSearch() {
+  const raw = queryEl.value.trim();
+  if (!raw) { flashInput(); return; }
+
+  const q = deinterrogativize(raw);
+  currentHasQuery = q;
+
+  showLoading('Recherche dans les recommandations HAS…');
+  hideInfoBoxes();
+
+  try {
+    const data = await loadHasData();
+    const results = searchHasData(data, q);
+    renderHasResults(results, q);
+  } catch (err) {
+    showError('Erreur HAS : ' + err.message);
+  }
+}
+
+async function loadHasData() {
+  if (hasDataCache) return hasDataCache;
+
+  try {
+    const cached = sessionStorage.getItem('ipa_has_data');
+    if (cached) { hasDataCache = JSON.parse(cached); return hasDataCache; }
+  } catch { /* ignore */ }
+
+  showLoading('Chargement du catalogue HAS…');
+  const datasetInfo = await get(
+    'https://www.data.gouv.fr/api/1/datasets/metadonnees-des-publications-de-la-has-1/',
+    15000
+  );
+
+  const resources = datasetInfo.resources || [];
+  const csvRes = resources.find(r =>
+    (r.format || '').toLowerCase() === 'csv' ||
+    (r.url || '').toLowerCase().includes('.csv')
+  );
+  if (!csvRes) throw new Error('Fichier CSV HAS introuvable sur data.gouv.fr');
+
+  showLoading('Téléchargement des métadonnées HAS…');
+  const csvText = await getText(csvRes.url, 30000);
+  const data = parseCSV(csvText);
+
+  hasDataCache = data;
+  try { sessionStorage.setItem('ipa_has_data', JSON.stringify(data)); } catch { /* plein */ }
+
+  return data;
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines.length < 2) return [];
+
+  const first = lines[0];
+  const sep = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ';' : ',';
+  const headers = parseCSVLine(first, sep).map(h => h.toLowerCase().trim().replace(/['"]/g, ''));
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = parseCSVLine(lines[i], sep);
+    const obj = {};
+    headers.forEach((h, idx) => { obj[h] = (vals[idx] || '').trim(); });
+    rows.push(obj);
+  }
+  return rows;
+}
+
+function parseCSVLine(line, sep) {
+  const result = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === sep && !inQ) {
+      result.push(cur); cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
+function searchHasData(data, query) {
+  const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const keywords = norm(query)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !HAS_STOP_FR.has(w));
+
+  if (keywords.length === 0) return data.slice(0, 10);
+
+  const scored = data.map(item => {
+    const title   = norm(item['titre_fr'] || item['titre'] || item['title'] || item['nom'] || '');
+    const theme   = norm(item['thematique'] || item['thématique'] || item['domaine'] || item['theme'] || '');
+    const kwField = norm(item['mots_cles'] || item['mots-cles'] || item['keywords'] || '');
+
+    let score = 0;
+    keywords.forEach(kw => {
+      if (title.includes(kw))   score += 3;
+      if (theme.includes(kw))   score += 2;
+      if (kwField.includes(kw)) score += 2;
+    });
+    return { ...item, _score: score };
+  });
+
+  return scored.filter(i => i._score > 0).sort((a, b) => b._score - a._score).slice(0, 10);
+}
+
+function renderHasResults(results, query) {
+  hideAll();
+
+  hasResultsTitle.textContent  = 'Recommandations HAS';
+  hasResultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
+  currentHasResults = results;
+  hasResultsContainer.innerHTML = '';
+
+  if (results.length === 0) {
+    hasResultsContainer.innerHTML =
+      '<p style="color:var(--muted);font-size:.9rem">Aucune recommandation HAS trouvée. Essayez d\'autres mots-clés.</p>';
+  } else {
+    results.forEach(r => hasResultsContainer.appendChild(buildHasCard(r)));
+  }
+
+  hasResultsSection.hidden = false;
+  hasResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function buildHasCard(r) {
+  const title = r['titre_fr'] || r['titre'] || r['title'] || r['nom'] || 'Sans titre';
+  const url   = r['url'] || r['lien'] || '#';
+  const type  = r['type_de_publication'] || r['type'] || '';
+  const theme = r['thematique'] || r['thématique'] || r['domaine'] || '';
+  const date  = r['date_de_mise_en_ligne'] || r['date_de_publication'] || r['date'] || '';
+
+  const card = document.createElement('div');
+  card.className = 'has-result-item';
+
+  const titleEl = document.createElement('div');
+  titleEl.className = 'result-title';
+  if (url && url !== '#') {
+    const a = document.createElement('a');
+    a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.textContent = title;
+    titleEl.appendChild(a);
+  } else {
+    titleEl.textContent = title;
+  }
+  card.appendChild(titleEl);
+
+  const meta = document.createElement('div');
+  meta.className = 'result-meta';
+  [type, theme, date].filter(Boolean).forEach(label => {
+    const tag = document.createElement('span');
+    tag.className = 'tag'; tag.textContent = label;
+    meta.appendChild(tag);
+  });
+  if (meta.childNodes.length) card.appendChild(meta);
+
+  if (url && url !== '#') {
+    const link = document.createElement('a');
+    link.className = 'result-link'; link.href = url;
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.textContent = 'Lire sur has-sante.fr →';
+    card.appendChild(link);
+  }
+
+  return card;
+}
+
+// ── Claude HAS ────────────────────────────────────────────────────────────────
+
+async function runHasWithPuter() {
+  if (!currentHasResults.length) return;
+  hasClaudeBtn.disabled = true;
+  hasClaudeCard.hidden  = true;
+  showLoading('Connexion à Claude gratuit via Puter…');
+
+  try {
+    await loadPuter();
+    showLoading('Génération de la synthèse HAS par Claude…');
+    const prompt = buildHasPrompt(currentHasQuery, currentHasResults);
+    const res    = await puter.ai.chat(prompt, { model: 'claude-sonnet-4-5' });
+    const text   = res?.message?.content?.[0]?.text ?? res?.message?.content ?? String(res);
+
+    hideAll();
+    hasResultsSection.hidden = false;
+    hasClaudeResponse.innerHTML = markdownToHtml(text);
+    hasClaudeCard.hidden = false;
+    hasResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    hideAll();
+    hasResultsSection.hidden = false;
+    limitBox.hidden      = false;
+    apiKeySection.hidden = false;
+    apiKeyInput.focus();
+  } finally {
+    hasClaudeBtn.disabled = false;
+  }
+}
+
+async function runHasWithApiKey(apiKey) {
+  if (!currentHasResults.length) return;
+  hasClaudeBtn.disabled = true;
+  hasClaudeCard.hidden  = true;
+  showLoading('Génération de la synthèse HAS par Claude…');
+
+  try {
+    const prompt = buildHasPrompt(currentHasQuery, currentHasResults);
+    const text   = await callClaudeAPI(apiKey, prompt);
+
+    hideAll();
+    hasResultsSection.hidden = false;
+    hasClaudeResponse.innerHTML = markdownToHtml(text);
+    hasClaudeCard.hidden = false;
+    hasResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    showError('Erreur Claude : ' + err.message);
+    hasResultsSection.hidden = false;
+  } finally {
+    hasClaudeBtn.disabled = false;
+  }
+}
+
+function buildHasPrompt(question, results) {
+  return (
+    'Tu es un assistant clinique pour infirmiers en pratique avancée (IPA).\n\n' +
+    'Question clinique : ' + question + '\n\n' +
+    'Voici les recommandations de la HAS (Haute Autorité de Santé) trouvées :\n\n' +
+    results.slice(0, 8).map((r, i) => {
+      const title = r['titre_fr'] || r['titre'] || r['title'] || r['nom'] || 'Sans titre';
+      const type  = r['type_de_publication'] || r['type'] || '';
+      const date  = r['date_de_mise_en_ligne'] || r['date_de_publication'] || r['date'] || '';
+      const theme = r['thematique'] || r['thématique'] || r['domaine'] || '';
+      return (
+        '--- Recommandation ' + (i + 1) + ' ---\n' +
+        'Titre : ' + title + '\n' +
+        (type  ? 'Type : ' + type + '\n'         : '') +
+        (date  ? 'Date : ' + date + '\n'         : '') +
+        (theme ? 'Thématique : ' + theme + '\n'  : '')
+      );
+    }).join('\n') +
+    '\n\n---\n' +
+    'Sur la base de ces recommandations HAS, rédige en français une synthèse clinique avec :\n' +
+    '1. **Points clés des recommandations HAS** applicables à la question\n' +
+    '2. **Implications pour la pratique infirmière avancée**\n' +
+    '3. **Points de vigilance** importants\n\n' +
+    'Sois concis, précis et directement applicable à la pratique clinique.'
+  );
 }

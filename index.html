@@ -50,7 +50,10 @@
         <span id="meshTerms"></span>
       </div>
 
-      <button class="search-btn" id="searchBtn">🔍 Rechercher</button>
+      <div class="search-btns-row">
+        <button class="search-btn" id="searchBtn">🔬 Littérature scientifique</button>
+        <button class="has-btn" id="hasSearchBtn">📋 Recommandations HAS</button>
+      </div>
     </section>
 
     <!-- Filtres (visibles après une recherche) -->
@@ -150,10 +153,38 @@
       </div>
     </section>
 
+    <!-- Résultats HAS -->
+    <section class="has-results-section" id="hasResultsSection" hidden>
+
+      <div class="action-row">
+        <button class="claude-btn" id="hasClaudeBtn">🤖 Résumé par Claude IA</button>
+      </div>
+
+      <!-- Résumé Claude HAS -->
+      <section class="claude-card" id="hasClaudeCard" hidden>
+        <div class="synthesis-header">
+          <h2>🤖 Synthèse HAS générée par Claude</h2>
+          <span class="synthesis-badge" id="hasClaudeBadge">Claude Sonnet</span>
+        </div>
+        <div class="claude-response" id="hasClaudeResponse"></div>
+      </section>
+
+      <div class="results-header">
+        <h2 id="hasResultsTitle"></h2>
+        <span class="results-badge has-results-badge" id="hasResultsBadge"></span>
+      </div>
+      <div id="hasResultsContainer"></div>
+      <div class="source-link">
+        <a href="https://www.has-sante.fr/jcms/fc_1249603/fr/recherche" target="_blank" rel="noopener">
+          Voir toutes les recommandations sur has-sante.fr →
+        </a>
+      </div>
+    </section>
+
   </main>
 
   <footer class="footer">
-    <p>IPA Search · Données issues de <a href="https://pubmed.ncbi.nlm.nih.gov" target="_blank" rel="noopener">PubMed / NCBI</a></p>
+    <p>IPA Search · Données issues de <a href="https://pubmed.ncbi.nlm.nih.gov" target="_blank" rel="noopener">PubMed / NCBI</a> et de la <a href="https://www.has-sante.fr" target="_blank" rel="noopener">HAS</a></p>
     <p class="footer-disclaimer">Outil d'aide à la décision — ne remplace pas le jugement clinique.</p>
   </footer>
 
