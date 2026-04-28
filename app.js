@@ -748,46 +748,69 @@ function deinterrogativize(text) {
 
 // ── HAS Search ────────────────────────────────────────────────────────────────
 
-const HAS_DATA_URL = 'https://www.data.gouv.fr/api/1/datasets/r/1c9d50d3-b98f-45d6-8d88-94b478a25724';
-
-async function runHasSearch() {
-  const raw = queryEl.value.trim();
-  if (!raw) { flashInput(); return; }
-
-  const q = deinterrogativize(raw);
-  currentHasQuery = q;
-
-  showLoading('Chargement des recommandations HAS…');
-  hideInfoBoxes();
-
-  try {
-    const data = await loadHasData();
-    const results = searchHasData(data, q);
-    renderHasResults(results, q);
-  } catch (err) {
-    showError('Erreur HAS : ' + err.message);
-  }
-}
+const HAS_DATASET_API = 'https://www.data.gouv.fr/api/1/datasets/metadonnees-des-publications-de-la-has-1/';
 
 async function loadHasData() {
   if (hasDataCache) return hasDataCache;
 
   try {
-    const c = sessionStorage.getItem('ipa_has');
+    const c = sessionStorage.getItem('ipa_has_v2');
     if (c) { hasDataCache = JSON.parse(c); return hasDataCache; }
   } catch { /* ignore */ }
 
-  showLoading('Téléchargement du catalogue HAS (première fois uniquement)…');
-  const raw = await get(HAS_DATA_URL, 30000);
+  showLoading('Chargement du catalogue HAS…');
 
-  // Le JSON peut être un tableau ou un objet — on trouve le premier tableau
-  const data = Array.isArray(raw)
-    ? raw
-    : Object.values(raw).find(v => Array.isArray(v)) || [];
+  const dataset = await get(HAS_DATASET_API, 15000);
+  const resources = dataset.resources || [];
+
+  const csvRes = resources.find(r => {
+    const url = (r.url || '').toLowerCase();
+    const fmt = (r.format || '').toLowerCase();
+    return (fmt === 'csv' || url.endsWith('.csv')) && !url.includes('schema');
+  });
+
+  if (!csvRes) throw new Error('Fichier CSV HAS introuvable');
+
+  showLoading('Téléchargement des publications HAS (première fois uniquement)…');
+  const csvText = await getText(csvRes.url, 30000);
+  const data = parseCSV(csvText);
 
   hasDataCache = data;
-  try { sessionStorage.setItem('ipa_has', JSON.stringify(data)); } catch { /* plein */ }
+  try { sessionStorage.setItem('ipa_has_v2', JSON.stringify(data)); } catch { /* plein */ }
   return data;
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const firstLine = lines[0];
+  const sep = (firstLine.match(/;/g) || []).length >= (firstLine.match(/,/g) || []).length ? ';' : ',';
+  const headers = parseCSVLine(firstLine, sep).map(h => h.toLowerCase().trim().replace(/^"|"$/g, ''));
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const vals = parseCSVLine(lines[i], sep);
+    const obj = {};
+    headers.forEach((h, idx) => { obj[h] = (vals[idx] || '').replace(/^"|"$/g, '').trim(); });
+    rows.push(obj);
+  }
+  return rows;
+}
+
+function parseCSVLine(line, sep) {
+  const result = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === sep && !inQ) {
+      result.push(cur); cur = '';
+    } else cur += ch;
+  }
+  result.push(cur);
+  return result;
 }
 
 function searchHasData(data, query) {
