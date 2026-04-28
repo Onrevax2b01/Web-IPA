@@ -100,6 +100,10 @@ clearKeyBtn.addEventListener('click', () => {
   limitBox.hidden = true;
 });
 
+// Vider les anciens caches HAS
+sessionStorage.removeItem('ipa_has');
+sessionStorage.removeItem('ipa_has_v2');
+
 // Pré-remplir la clé si déjà enregistrée
 const storedKey = localStorage.getItem('ipa_anthropic_key');
 if (storedKey) apiKeyInput.value = storedKey;
@@ -749,6 +753,25 @@ function deinterrogativize(text) {
 // ── HAS Search ────────────────────────────────────────────────────────────────
 
 const HAS_DATASET_API = 'https://www.data.gouv.fr/api/1/datasets/metadonnees-des-publications-de-la-has-1/';
+
+async function runHasSearch() {
+  const raw = queryEl.value.trim();
+  if (!raw) { flashInput(); return; }
+
+  const q = deinterrogativize(raw);
+  currentHasQuery = q;
+
+  showLoading('Chargement des recommandations HAS…');
+  hideInfoBoxes();
+
+  try {
+    const data = await loadHasData();
+    const results = searchHasData(data, q);
+    renderHasResults(results, q);
+  } catch (err) {
+    showError('Erreur HAS : ' + err.message);
+  }
+}
 
 async function loadHasData() {
   if (hasDataCache) return hasDataCache;
