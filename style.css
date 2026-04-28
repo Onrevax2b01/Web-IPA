@@ -139,8 +139,13 @@ body {
   font-weight: 600;
 }
 
+.search-btns-row {
+  display: flex;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
 .search-btn {
-  align-self: flex-start;
   background: var(--blue);
   color: #fff;
   border: none;
@@ -153,6 +158,21 @@ body {
 }
 .search-btn:hover  { background: var(--blue-dark); }
 .search-btn:active { transform: scale(.98); }
+
+.has-btn {
+  background: #0e7490;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: .8rem 1.8rem;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .18s, transform .1s;
+}
+.has-btn:hover  { background: #0c5f73; }
+.has-btn:active { transform: scale(.98); }
+.has-btn:disabled { background: var(--muted); cursor: not-allowed; }
 
 /* ── Filter card ── */
 .filter-card {
