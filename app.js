@@ -753,9 +753,9 @@ function deinterrogativize(text) {
   return q.charAt(0).toUpperCase() + q.slice(1);
 }
 
-// ── HAS Search via LiSSa ─────────────────────────────────────────────────────
+// ── HAS Search via OpenAlex ───────────────────────────────────────────────────
 
-const LISSA_URL = 'https://www.lissa.fr/dc/elements/';
+const OPENALEX_URL = 'https://api.openalex.org/works';
 
 async function runHasSearch() {
   const raw = queryEl.value.trim();
@@ -764,61 +764,54 @@ async function runHasSearch() {
   const q = deinterrogativize(raw);
   currentHasQuery = q;
 
-  showLoading('Recherche dans les recommandations HAS via LiSSa…');
+  showLoading('Recherche de recommandations en cours…');
   hideInfoBoxes();
 
   try {
-    const results = await searchLissa(q);
+    const results = await searchOpenAlex(q);
     renderHasResults(results, q);
   } catch (err) {
-    showError('Erreur LiSSa : ' + err.message);
+    showError('Erreur de recherche : ' + err.message);
   }
 }
 
-async function searchLissa(query) {
-  const url = LISSA_URL + '?query=' + encodeURIComponent(query) + '&nb=10';
+async function searchOpenAlex(query) {
+  const searchTerm = encodeURIComponent(query + ' recommandations guidelines');
+  const url = OPENALEX_URL +
+    '?search=' + searchTerm +
+    '&filter=language:fr' +
+    '&per-page=10' +
+    '&select=title,doi,publication_date,type,primary_location,open_access' +
+    '&mailto=ipa-search@example.com';
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
-
-    const text = await res.text();
-
-    // LiSSa renvoie du XML — on parse
-    if (text.trim().startsWith('<')) {
-      return parseLissaXML(text);
-    }
-    // Fallback JSON
-    const data = JSON.parse(text);
-    return Array.isArray(data) ? data : (data.items || data.results || []);
+    const data = await res.json();
+    return (data.results || []).map(item => {
+      const doi = item.doi ? item.doi.replace('https://doi.org/', '') : '';
+      const link = doi ? ('https://doi.org/' + doi)
+        : (item.open_access?.oa_url || item.primary_location?.landing_page_url || '');
+      return {
+        title:  item.title || 'Sans titre',
+        url:    link,
+        source: item.primary_location?.source?.display_name || '',
+        date:   item.publication_date ? item.publication_date.substring(0, 4) : '',
+        type:   item.type || '',
+      };
+    });
   } finally {
     clearTimeout(timer);
   }
 }
 
-function parseLissaXML(xml) {
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  const items = doc.querySelectorAll('item, record, element, result, doc');
-  if (!items.length) return [];
-
-  return Array.from(items).map(el => {
-    const get = tag => el.querySelector(tag)?.textContent?.trim() || '';
-    return {
-      title:  get('title') || get('titre') || get('name') || get('dc\:title') || 'Sans titre',
-      url:    get('link')  || get('url')   || get('uri')  || get('dc\:identifier') || '',
-      source: get('source')|| get('journal')|| get('dc\:source') || '',
-      date:   get('date')  || get('year')  || get('dc\:date') || '',
-      type:   get('type')  || get('dc\:type') || '',
-    };
-  });
-}
-
 function renderHasResults(results, query) {
   hideAll();
 
-  hasResultsTitle.textContent  = 'Recommandations — LiSSa';
+  hasResultsTitle.textContent  = 'Recommandations — OpenAlex';
   hasResultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
   currentHasResults = results;
   hasResultsContainer.innerHTML = '';
@@ -826,7 +819,7 @@ function renderHasResults(results, query) {
   if (results.length === 0) {
     // Fallback : lien direct vers HAS
     hasResultsContainer.innerHTML =
-      '<p style="color:var(--muted);font-size:.9rem">Aucun résultat LiSSa. ' +
+      '<p style="color:var(--muted);font-size:.9rem">Aucun résultat. ' +
       '<a href="https://www.has-sante.fr/jcms/fc_1249603/fr/recherche?text=' +
       encodeURIComponent(query) + '" target="_blank" rel="noopener" style="color:#0e7490;font-weight:600">' +
       'Rechercher directement sur has-sante.fr →</a></p>';
