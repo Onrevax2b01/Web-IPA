@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPA Search — Moteur de recherche Infirmier en Pratique Avancée</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⚕</span>
+        <div>
+          <h1>IPA Search</h1>
+          <p>Moteur de recherche — Infirmier en Pratique Avancée</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- Carte de recherche -->
+    <section class="search-card">
+      <label class="search-label" for="query">Posez votre question clinique</label>
+      <textarea
+        id="query"
+        class="search-input"
+        placeholder="Ex : prise en charge du diabète de type 2 chez l'adulte"
+        rows="3"
+        autocomplete="off"
+        spellcheck="true"
+      ></textarea>
+      <p class="search-hint">Posez votre question en français — elle sera traduite automatiquement en anglais.</p>
+
+      <div class="translation-box" id="translationBox" hidden>
+        <span class="translation-label">Recherche traduite :</span>
+        <span id="translatedQuery"></span>
+      </div>
+      <div class="conversion-box" id="conversionBox" hidden>
+        <span class="conversion-label">⚠ Nom commercial remplacé :</span>
+        <span id="conversionText"></span>
+      </div>
+      <div class="dci-box" id="dciBox" hidden>
+        <span class="dci-label">Principe actif (DCI) :</span>
+        <span id="dciName"></span>
+      </div>
+      <div class="mesh-box" id="meshBox" hidden>
+        <span class="mesh-label">Termes MeSH utilisés :</span>
+        <span id="meshTerms"></span>
+      </div>
+
+      <button class="search-btn" id="searchBtn">🔍 Rechercher</button>
+    </section>
+
+    <!-- Filtres (visibles après une recherche) -->
+    <section class="filter-card" id="filterCard" hidden>
+      <div class="filter-row">
+        <span class="filter-label">Type d'étude :</span>
+        <div class="filter-btns">
+          <button class="filter-btn active" data-pt="">Tous</button>
+          <button class="filter-btn" data-pt="meta-analysis[pt] OR systematic review[pt]">Méta-analyses</button>
+          <button class="filter-btn" data-pt="randomized controlled trial[pt]">Essais cliniques</button>
+          <button class="filter-btn" data-pt="review[pt]">Revues</button>
+        </div>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Période :</span>
+        <div class="filter-btns">
+          <button class="period-btn active" data-years="0">Toutes dates</button>
+          <button class="period-btn" data-years="5">5 dernières années</button>
+          <button class="period-btn" data-years="10">10 dernières années</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Spinner -->
+    <div class="loading" id="loading" hidden>
+      <div class="spinner"></div>
+      <p id="loadingMsg">Recherche en cours…</p>
+    </div>
+
+    <!-- Erreur -->
+    <div class="error-box" id="errorBox" hidden>
+      <p id="errorMsg"></p>
+    </div>
+
+    <!-- Résultats -->
+    <section class="results-section" id="resultsSection" hidden>
+
+      <!-- Boutons d'action EN HAUT des résultats -->
+      <div class="action-row">
+        <button class="synthesis-btn" id="synthesisBtn">📋 Synthèse clinique</button>
+        <button class="claude-btn" id="claudeBtn">🤖 Résumé par Claude IA</button>
+      </div>
+
+      <!-- Message limite atteinte -->
+      <div class="limit-box" id="limitBox" hidden>
+        <p>⚠️ <strong>Limite gratuite atteinte.</strong> Entrez votre clé API Anthropic pour continuer à utiliser Claude IA.</p>
+      </div>
+
+      <!-- Clé API Anthropic (masquée par défaut) -->
+      <div class="api-key-section" id="apiKeySection" hidden>
+        <div class="api-key-inner">
+          <label for="apiKeyInput">Clé API Anthropic :</label>
+          <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-…" autocomplete="off" />
+          <button class="save-key-btn" id="saveKeyBtn">Enregistrer</button>
+          <button class="clear-key-btn" id="clearKeyBtn">Supprimer la clé</button>
+        </div>
+        <p class="api-key-hint">
+          Votre clé est stockée uniquement dans votre navigateur.
+          <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Obtenir une clé →</a>
+        </p>
+      </div>
+
+      <!-- Synthèse clinique — au-dessus des résultats PubMed -->
+      <section class="synthesis-card" id="synthesisCard" hidden>
+        <div class="synthesis-header">
+          <h2>Synthèse clinique</h2>
+          <span class="synthesis-badge" id="synthesisBadge"></span>
+        </div>
+
+        <div id="synthesisAbstracts"></div>
+
+        <div class="copy-section">
+          <button class="copy-btn" id="copyBtn">📋 Copier le contexte pour IA</button>
+          <span class="copy-confirm" id="copyConfirm" hidden>✓ Copié !</span>
+          <p class="copy-hint">Collez ce texte dans Claude.ai, ChatGPT ou tout autre assistant IA pour obtenir une synthèse rédigée.</p>
+        </div>
+      </section>
+
+      <!-- Résumé Claude — au-dessus des résultats PubMed -->
+      <section class="claude-card" id="claudeCard" hidden>
+        <div class="synthesis-header">
+          <h2>🤖 Synthèse générée par Claude</h2>
+          <span class="synthesis-badge" id="claudeBadge">Claude Sonnet</span>
+        </div>
+        <div class="claude-response" id="claudeResponse"></div>
+      </section>
+
+      <div class="results-header">
+        <h2 id="resultsTitle"></h2>
+        <span class="results-badge" id="resultsBadge"></span>
+      </div>
+      <div id="resultsContainer"></div>
+      <div class="source-link">
+        <a id="externalLink" href="#" target="_blank" rel="noopener noreferrer">
+          Voir tous les résultats sur PubMed →
+        </a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>IPA Search · Données issues de <a href="https://pubmed.ncbi.nlm.nih.gov" target="_blank" rel="noopener">PubMed / NCBI</a></p>
+    <p class="footer-disclaimer">Outil d'aide à la décision — ne remplace pas le jugement clinique.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
