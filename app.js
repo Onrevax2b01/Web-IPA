@@ -60,6 +60,16 @@ let currentHasResults = [];
 let currentHasQuery   = '';
 let pendingClaudeCtx  = 'pubmed'; // 'pubmed' | 'has'
 
+// ── Constantes DCI ───────────────────────────────────────────────────────────
+
+const STOP_WORDS = new Set([
+  'the','of','in','and','or','for','use','with','during','after','before',
+  'at','by','from','to','on','an','a','is','are','was','were','have','has',
+  'management','treatment','therapy','patients','patient','adults','adult',
+  'role','effect','effects','impact','study','review','analysis','using',
+]);
+
+
 // ── Events ───────────────────────────────────────────────────────────────────
 
 searchBtn.addEventListener('click', runSearch);
@@ -546,13 +556,6 @@ async function translate(text) {
 }
 
 // ── DCI via RxNorm ────────────────────────────────────────────────────────────
-
-const STOP_WORDS = new Set([
-  'the','of','in','and','or','for','use','with','during','after','before',
-  'at','by','from','to','on','an','a','is','are','was','were','have','has',
-  'management','treatment','therapy','patients','patient','adults','adult',
-  'role','effect','effects','impact','study','review','analysis','using',
-]);
 
 async function findDCI(sentence) {
   const words = sentence.toLowerCase()
