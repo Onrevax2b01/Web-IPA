@@ -773,6 +773,8 @@ async function runHasSearch() {
   }
 }
 
+const HAS_JSON_URL = 'https://static.data.gouv.fr/resources/metadonnees-des-publications-de-la-has-1/20260427-054325/json-schema.json';
+
 async function loadHasData() {
   if (hasDataCache) return hasDataCache;
 
@@ -781,22 +783,11 @@ async function loadHasData() {
     if (cached) { hasDataCache = JSON.parse(cached); return hasDataCache; }
   } catch { /* ignore */ }
 
-  showLoading('Chargement du catalogue HAS…');
-  const datasetInfo = await get(
-    'https://www.data.gouv.fr/api/1/datasets/metadonnees-des-publications-de-la-has-1/',
-    15000
-  );
+  showLoading('Chargement des métadonnées HAS…');
+  const raw = await get(HAS_JSON_URL, 30000);
 
-  const resources = datasetInfo.resources || [];
-  const csvRes = resources.find(r =>
-    (r.format || '').toLowerCase() === 'csv' ||
-    (r.url || '').toLowerCase().includes('.csv')
-  );
-  if (!csvRes) throw new Error('Fichier CSV HAS introuvable sur data.gouv.fr');
-
-  showLoading('Téléchargement des métadonnées HAS…');
-  const csvText = await getText(csvRes.url, 30000);
-  const data = parseCSV(csvText);
+  // Le JSON peut être un tableau directement ou un objet avec une clé données
+  const data = Array.isArray(raw) ? raw : (raw.data || raw.records || raw.results || [raw]);
 
   hasDataCache = data;
   try { sessionStorage.setItem('ipa_has_data', JSON.stringify(data)); } catch { /* plein */ }
