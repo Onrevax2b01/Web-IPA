@@ -748,12 +748,6 @@ function deinterrogativize(text) {
 
 // ── HAS Search ────────────────────────────────────────────────────────────────
 
-const HAS_STOP_FR = new Set([
-  'le','la','les','de','du','des','un','une','et','ou','en','au','aux',
-  'par','pour','sur','dans','avec','sans','que','qui','est','sont',
-  'plus','très','bien','tout','tous','cette','ces','son','sa','ses',
-]);
-
 async function runHasSearch() {
   const raw = queryEl.value.trim();
   if (!raw) { flashInput(); return; }
@@ -765,97 +759,34 @@ async function runHasSearch() {
   hideInfoBoxes();
 
   try {
-    const data = await loadHasData();
-    const results = searchHasData(data, q);
+    const results = await searchHasAPI(q);
     renderHasResults(results, q);
   } catch (err) {
     showError('Erreur HAS : ' + err.message);
   }
 }
 
-const HAS_JSON_URL = 'https://www.data.gouv.fr/api/1/datasets/r/1c9d50d3-b98f-45d6-8d88-94b478a25724';
+async function searchHasAPI(query) {
+  const url =
+    'https://www.has-sante.fr/rest/search' +
+    '?text=' + encodeURIComponent(query) +
+    '&langs=fr&pageSize=10';
 
-async function loadHasData() {
-  if (hasDataCache) return hasDataCache;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const cached = sessionStorage.getItem('ipa_has_data');
-    if (cached) { hasDataCache = JSON.parse(cached); return hasDataCache; }
-  } catch { /* ignore */ }
-
-  showLoading('Chargement des métadonnées HAS…');
-  const raw = await get(HAS_JSON_URL, 30000);
-
-  // Le JSON peut être un tableau directement ou un objet avec une clé données
-  const data = Array.isArray(raw) ? raw : (raw.data || raw.records || raw.results || [raw]);
-
-  hasDataCache = data;
-  try { sessionStorage.setItem('ipa_has_data', JSON.stringify(data)); } catch { /* plein */ }
-
-  return data;
-}
-
-function parseCSV(text) {
-  const lines = text.split(/\r?\n/);
-  if (lines.length < 2) return [];
-
-  const first = lines[0];
-  const sep = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ';' : ',';
-  const headers = parseCSVLine(first, sep).map(h => h.toLowerCase().trim().replace(/['"]/g, ''));
-  const rows = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    const vals = parseCSVLine(lines[i], sep);
-    const obj = {};
-    headers.forEach((h, idx) => { obj[h] = (vals[idx] || '').trim(); });
-    rows.push(obj);
-  }
-  return rows;
-}
-
-function parseCSVLine(line, sep) {
-  const result = [];
-  let cur = '', inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
-      else inQ = !inQ;
-    } else if (ch === sep && !inQ) {
-      result.push(cur); cur = '';
-    } else {
-      cur += ch;
-    }
-  }
-  result.push(cur);
-  return result;
-}
-
-function searchHasData(data, query) {
-  const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const keywords = norm(query)
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length >= 3 && !HAS_STOP_FR.has(w));
-
-  if (keywords.length === 0) return data.slice(0, 10);
-
-  const scored = data.map(item => {
-    const title   = norm(item['titre_fr'] || item['titre'] || item['title'] || item['nom'] || '');
-    const theme   = norm(item['thematique'] || item['thématique'] || item['domaine'] || item['theme'] || '');
-    const kwField = norm(item['mots_cles'] || item['mots-cles'] || item['keywords'] || '');
-
-    let score = 0;
-    keywords.forEach(kw => {
-      if (title.includes(kw))   score += 3;
-      if (theme.includes(kw))   score += 2;
-      if (kwField.includes(kw)) score += 2;
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' },
     });
-    return { ...item, _score: score };
-  });
-
-  return scored.filter(i => i._score > 0).sort((a, b) => b._score - a._score).slice(0, 10);
+    if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
+    const data = await res.json();
+    // Jalios : tableau direct ou objet paginé
+    return Array.isArray(data) ? data : (data.items || data.data || data.results || []);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function renderHasResults(results, query) {
@@ -878,11 +809,12 @@ function renderHasResults(results, query) {
 }
 
 function buildHasCard(r) {
-  const title = r['titre_fr'] || r['titre'] || r['title'] || r['nom'] || 'Sans titre';
-  const url   = r['url'] || r['lien'] || '#';
-  const type  = r['type_de_publication'] || r['type'] || '';
-  const theme = r['thematique'] || r['thématique'] || r['domaine'] || '';
-  const date  = r['date_de_mise_en_ligne'] || r['date_de_publication'] || r['date'] || '';
+  const title = r['title'] || r['label'] || r['titre_fr'] || r['titre'] || r['nom'] || 'Sans titre';
+  const id    = r['id'] || r['cid'] || '';
+  const url   = id ? 'https://www.has-sante.fr/jcms/' + id : (r['url'] || r['lien'] || '#');
+  const type  = r['type'] || r['typeName'] || r['type_de_publication'] || '';
+  const theme = r['category'] || r['thematique'] || r['domaine'] || '';
+  const date  = r['pdate'] || r['date_de_mise_en_ligne'] || r['date'] || '';
 
   const card = document.createElement('div');
   card.className = 'has-result-item';
@@ -979,10 +911,10 @@ function buildHasPrompt(question, results) {
     'Question clinique : ' + question + '\n\n' +
     'Voici les recommandations de la HAS (Haute Autorité de Santé) trouvées :\n\n' +
     results.slice(0, 8).map((r, i) => {
-      const title = r['titre_fr'] || r['titre'] || r['title'] || r['nom'] || 'Sans titre';
-      const type  = r['type_de_publication'] || r['type'] || '';
-      const date  = r['date_de_mise_en_ligne'] || r['date_de_publication'] || r['date'] || '';
-      const theme = r['thematique'] || r['thématique'] || r['domaine'] || '';
+      const title = r['title'] || r['label'] || r['titre_fr'] || r['titre'] || r['nom'] || 'Sans titre';
+      const type  = r['type'] || r['typeName'] || r['type_de_publication'] || '';
+      const date  = r['pdate'] || r['date_de_mise_en_ligne'] || r['date'] || '';
+      const theme = r['category'] || r['thematique'] || r['domaine'] || '';
       return (
         '--- Recommandation ' + (i + 1) + ' ---\n' +
         'Titre : ' + title + '\n' +
