@@ -782,8 +782,13 @@ async function searchHasAPI(query) {
     });
     if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
     const data = await res.json();
+    console.log('[HAS] réponse brute :', JSON.stringify(data).slice(0, 500));
     // Jalios : tableau direct ou objet paginé
-    return Array.isArray(data) ? data : (data.items || data.data || data.results || []);
+    const items = Array.isArray(data)
+      ? data
+      : (data.items || data.data || data.results || data.result || data.content || data.objects || []);
+    console.log('[HAS] items extraits :', items.length, items[0]);
+    return items;
   } finally {
     clearTimeout(timer);
   }
