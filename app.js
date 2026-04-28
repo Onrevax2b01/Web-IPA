@@ -773,7 +773,7 @@ async function runHasSearch() {
   }
 }
 
-const HAS_JSON_URL = 'https://static.data.gouv.fr/resources/metadonnees-des-publications-de-la-has-1/20260427-054325/json-schema.json';
+const HAS_JSON_URL = 'https://www.data.gouv.fr/api/1/datasets/r/1c9d50d3-b98f-45d6-8d88-94b478a25724';
 
 async function loadHasData() {
   if (hasDataCache) return hasDataCache;
