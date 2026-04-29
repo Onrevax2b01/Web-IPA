@@ -936,94 +936,72 @@ async function runHasSearch() {
   showLoading('Recherche dans les recommandations HAS…');
   hideInfoBoxes();
 
-  // 1. Essai scraping direct has-sante.fr via proxy
   let results = [];
-  let fromHAS = false;
-  try {
-    results = await searchHAS(q);
-    fromHAS = results.length >= 2;
-  } catch { /* continue */ }
+  let sourceLabel = 'Recommandations HAS';
 
-  // 2. Fallback OpenAlex si scraping insuffisant
-  if (!fromHAS) {
-    try { results = await searchOpenAlex(q, true); } catch { /* continue */ }
+  // 1. API REST Jalios de HAS (JSON - titres/métadonnées)
+  try { results = await searchHASApi(q); } catch { /* continue */ }
+
+  // 2. Fallback garanti : OpenAlex recommandations françaises
+  if (results.length < 2) {
+    try {
+      results = await searchOpenAlex(q, true);
+      sourceLabel = 'Recommandations — OpenAlex FR';
+    } catch { /* continue */ }
   }
 
-  hasResultsTitle.textContent = fromHAS
-    ? 'Recommandations HAS'
-    : 'Recommandations — OpenAlex (fallback)';
-
+  hasResultsTitle.textContent = sourceLabel;
   renderHasResults(results, q);
 }
 
-async function searchHAS(query) {
-  const hasUrl = 'https://www.has-sante.fr/jcms/fc_1249603/fr/recherche?text='
-    + encodeURIComponent(query) + '&orderby=score&nb=10';
+// Essaie plusieurs variantes de l’API Jalios HAS pour obtenir du JSON
+async function searchHASApi(query) {
+  const base = 'https://www.has-sante.fr';
 
-  const proxies = [
-    'https://corsproxy.io/?' + encodeURIComponent(hasUrl),
-    'https://api.allorigins.win/raw?url=' + encodeURIComponent(hasUrl),
+  // Variantes d’URL de l’API Jalios connues
+  const apiUrls = [
+    base + '/rest/portlets?search=' + encodeURIComponent(query) + '&lang=fr&nb=10&orderby=score',
+    base + '/rest/publications?search=' + encodeURIComponent(query) + '&lang=fr&nb=10',
+    base + '/jcms/fc_1249603/fr/recherche.json?text=' + encodeURIComponent(query) + '&nb=10',
   ];
 
-  for (const proxyUrl of proxies) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(proxyUrl, { signal: controller.signal });
-      clearTimeout(timer);
-      if (!res.ok) continue;
-      const html = await res.text();
-      if (html && html.length > 500) {
-        const results = parseHASHtml(html);
-        if (results.length >= 2) return results;
-      }
-    } catch { /* essayer le suivant */ }
+  const proxies = [
+    url => 'https://corsproxy.io/?' + encodeURIComponent(url),
+    url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+  ];
+
+  for (const apiUrl of apiUrls) {
+    for (const makeProxy of proxies) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 12000);
+        const res = await fetch(makeProxy(apiUrl), { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+
+        const text = await res.text();
+        // Ignorer si la réponse est du HTML (page d’erreur ou redirect)
+        if (!text.trim().startsWith('{') && !text.trim().startsWith('[')) continue;
+
+        const data = JSON.parse(text);
+        const list = data.publications || data.items || data.results || data.portlets ||
+                     (Array.isArray(data) ? data : null);
+        if (!list || list.length === 0) continue;
+
+        const mapped = list.map(p => ({
+          title:    p.title || p.label || p.nom || p.name || '',
+          url:      p.url   ? (p.url.startsWith('http') ? p.url : base + p.url)
+                            : (p.uri ? base + p.uri : ''),
+          source:   'has-sante.fr',
+          date:     p.date || p.pdate || p.creationDate || p.modificationDate || '',
+          abstract: p.description || p.resume || p.excerpt || p.abstract || '',
+        })).filter(r => r.title.length > 5);
+
+        if (mapped.length >= 2) return mapped;
+      } catch { /* essayer la combinaison suivante */ }
+    }
   }
   return [];
-}
-
-function parseHASHtml(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const items = [];
-  const seen = new Set();
-
-  // Zone de contenu principal uniquement (exclut nav/header/footer)
-  const main = doc.querySelector('main, [role="main"], #main, #content, .main-content') || doc.body;
-
-  // Stratégie 1 : sélecteurs Jalios CMS — portlet-item dans la zone de résultats
-  main.querySelectorAll('.portlet-item, .portlet-search-result-item, .portlet-search-result, li.result').forEach(node => {
-    const a = node.querySelector('a[href*="/jcms/p_"], a[href*="/jcms/c_"]');
-    if (!a) return;
-    const href = a.getAttribute('href') || '';
-    const url = href.startsWith('http') ? href : 'https://www.has-sante.fr' + href;
-    if (seen.has(url)) return;
-    seen.add(url);
-    const title = (node.querySelector('.portlet-item-title, h2, h3, h4')?.textContent || a.textContent).trim();
-    if (title.length < 10) return;
-    const snippet = node.querySelector('.portlet-item-abstract, .abstract, .resume, p')?.textContent.trim() || '';
-    const date = node.querySelector('.portlet-item-dates, .date, time')?.textContent.trim() || '';
-    items.push({ title, url, source: 'has-sante.fr', date, abstract: snippet });
-  });
-
-  if (items.length >= 2) return items;
-
-  // Stratégie 2 : liens /jcms/p_ (publications) hors éléments de navigation
-  main.querySelectorAll('a[href*="/jcms/p_"]').forEach(a => {
-    if (a.closest('nav, header, footer, .breadcrumb, .sidebar, .menu')) return;
-    const href = a.getAttribute('href') || '';
-    if (!href.match(/\/jcms\/p_\d{5,}/)) return;
-    const url = href.startsWith('http') ? href : 'https://www.has-sante.fr' + href;
-    if (seen.has(url)) return;
-    seen.add(url);
-    const title = (a.title || a.textContent).trim();
-    if (title.length < 20) return;
-    const parent = a.closest('li, article, div');
-    const snippet = parent ? Array.from(parent.querySelectorAll('p, .description'))
-      .map(el => el.textContent.trim()).filter(t => t.length > 30).join(' ').slice(0, 200) : '';
-    items.push({ title, url, source: 'has-sante.fr', date: '', abstract: snippet });
-  });
-
-  return items.slice(0, 10);
 }
 
 
