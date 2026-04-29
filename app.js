@@ -933,16 +933,27 @@ async function runHasSearch() {
 
   const q = deinterrogativize(raw);
   currentHasQuery = q;
-
-  showLoading('Recherche sur has-sante.fr en cours…');
+  showLoading('Recherche dans les recommandations HAS…');
   hideInfoBoxes();
 
+  // 1. Essai scraping direct has-sante.fr via proxy
+  let results = [];
+  let fromHAS = false;
   try {
-    const results = await searchHAS(q);
-    renderHasResults(results, q);
-  } catch {
-    renderHasResults([], q); // affiche le lien direct HAS en fallback
+    results = await searchHAS(q);
+    fromHAS = results.length >= 2;
+  } catch { /* continue */ }
+
+  // 2. Fallback OpenAlex si scraping insuffisant
+  if (!fromHAS) {
+    try { results = await searchOpenAlex(q, true); } catch { /* continue */ }
   }
+
+  hasResultsTitle.textContent = fromHAS
+    ? 'Recommandations HAS'
+    : 'Recommandations — OpenAlex (fallback)';
+
+  renderHasResults(results, q);
 }
 
 async function searchHAS(query) {
@@ -952,7 +963,6 @@ async function searchHAS(query) {
   const proxies = [
     'https://corsproxy.io/?' + encodeURIComponent(hasUrl),
     'https://api.allorigins.win/raw?url=' + encodeURIComponent(hasUrl),
-    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(hasUrl),
   ];
 
   for (const proxyUrl of proxies) {
@@ -965,11 +975,10 @@ async function searchHAS(query) {
       const html = await res.text();
       if (html && html.length > 500) {
         const results = parseHASHtml(html);
-        if (results.length > 0) return results;
+        if (results.length >= 2) return results;
       }
     } catch { /* essayer le suivant */ }
   }
-
   return [];
 }
 
@@ -978,44 +987,45 @@ function parseHASHtml(html) {
   const items = [];
   const seen = new Set();
 
-  // Stratégie 1 : sélecteurs Jalios CMS courants
-  const selectors = [
-    '.portlet-search-result',
-    '.search-result',
-    'li.result',
-    'article.portlet-item',
-    '.csc-searchResult',
-  ];
-  for (const sel of selectors) {
-    doc.querySelectorAll(sel).forEach(node => {
-      const a = node.querySelector('a[href]');
-      if (!a) return;
-      const url = a.href.startsWith('http') ? a.href : 'https://www.has-sante.fr' + a.getAttribute('href');
-      if (seen.has(url) || !url.includes('has-sante.fr')) return;
-      seen.add(url);
-      const title = (node.querySelector('h2,h3,.title,.portlet-title')?.textContent || a.textContent).trim();
-      const snippet = node.querySelector('.resume,.description,p')?.textContent.trim() || '';
-      const date = node.querySelector('.date,time')?.textContent.trim() || '';
-      items.push({ title, url, source: 'has-sante.fr', date, abstract: snippet });
-    });
-    if (items.length) return items;
-  }
+  // Zone de contenu principal uniquement (exclut nav/header/footer)
+  const main = doc.querySelector('main, [role="main"], #main, #content, .main-content') || doc.body;
 
-  // Stratégie 2 : tous les liens /jcms/ présents sur la page de résultats
-  doc.querySelectorAll('a[href*="/jcms/"]').forEach(a => {
+  // Stratégie 1 : sélecteurs Jalios CMS — portlet-item dans la zone de résultats
+  main.querySelectorAll('.portlet-item, .portlet-search-result-item, .portlet-search-result, li.result').forEach(node => {
+    const a = node.querySelector('a[href*="/jcms/p_"], a[href*="/jcms/c_"]');
+    if (!a) return;
     const href = a.getAttribute('href') || '';
     const url = href.startsWith('http') ? href : 'https://www.has-sante.fr' + href;
     if (seen.has(url)) return;
-    // Exclure liens de navigation (trop courts ou sans identifiant de contenu)
-    if (!href.match(/\/jcms\/[a-z]+_\d{5,}/)) return;
     seen.add(url);
-    const title = a.textContent.trim();
-    if (title.length < 15) return;
-    items.push({ title, url, source: 'has-sante.fr', date: '', abstract: '' });
+    const title = (node.querySelector('.portlet-item-title, h2, h3, h4')?.textContent || a.textContent).trim();
+    if (title.length < 10) return;
+    const snippet = node.querySelector('.portlet-item-abstract, .abstract, .resume, p')?.textContent.trim() || '';
+    const date = node.querySelector('.portlet-item-dates, .date, time')?.textContent.trim() || '';
+    items.push({ title, url, source: 'has-sante.fr', date, abstract: snippet });
+  });
+
+  if (items.length >= 2) return items;
+
+  // Stratégie 2 : liens /jcms/p_ (publications) hors éléments de navigation
+  main.querySelectorAll('a[href*="/jcms/p_"]').forEach(a => {
+    if (a.closest('nav, header, footer, .breadcrumb, .sidebar, .menu')) return;
+    const href = a.getAttribute('href') || '';
+    if (!href.match(/\/jcms\/p_\d{5,}/)) return;
+    const url = href.startsWith('http') ? href : 'https://www.has-sante.fr' + href;
+    if (seen.has(url)) return;
+    seen.add(url);
+    const title = (a.title || a.textContent).trim();
+    if (title.length < 20) return;
+    const parent = a.closest('li, article, div');
+    const snippet = parent ? Array.from(parent.querySelectorAll('p, .description'))
+      .map(el => el.textContent.trim()).filter(t => t.length > 30).join(' ').slice(0, 200) : '';
+    items.push({ title, url, source: 'has-sante.fr', date: '', abstract: snippet });
   });
 
   return items.slice(0, 10);
 }
+
 
 function reconstructAbstract(inv) {
   if (!inv || typeof inv !== 'object') return '';
