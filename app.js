@@ -934,15 +934,63 @@ async function runHasSearch() {
   const q = deinterrogativize(raw);
   currentHasQuery = q;
 
-  showLoading('Recherche de recommandations en cours…');
+  showLoading('Recherche sur has-sante.fr en cours…');
   hideInfoBoxes();
 
   try {
-    const results = await searchOpenAlex(q, true);
+    const results = await searchHAS(q);
     renderHasResults(results, q);
   } catch (err) {
-    showError('Erreur de recherche : ' + err.message);
+    showError('Erreur de recherche HAS : ' + err.message);
   }
+}
+
+async function searchHAS(query) {
+  const ddgUrl = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent('site:has-sante.fr ' + query);
+  const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(ddgUrl);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const res = await fetch(proxyUrl, { signal: controller.signal });
+    if (!res.ok) throw new Error('Proxy indisponible (' + res.status + ')');
+    const data = await res.json();
+    return parseDDGHtml(data.contents || '');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function parseDDGHtml(html) {
+  if (!html) return [];
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const items = [];
+
+  doc.querySelectorAll('.result__body').forEach(el => {
+    const titleEl = el.querySelector('.result__a');
+    if (!titleEl) return;
+
+    const title = titleEl.textContent.trim();
+
+    // DDG enveloppe les URLs dans des redirections — on extrait l'URL réelle
+    const raw = titleEl.getAttribute('href') || '';
+    let url = '';
+    try {
+      const match = raw.match(/[?&]uddg=([^&]+)/);
+      url = match ? decodeURIComponent(match[1]) : raw;
+    } catch { url = raw; }
+
+    // Garder uniquement les liens HAS
+    if (url && !url.includes('has-sante.fr')) return;
+
+    const snippet = el.querySelector('.result__snippet')?.textContent.trim() || '';
+    const displayUrl = el.querySelector('.result__url')?.textContent.trim() || '';
+
+    items.push({ title, url, source: 'has-sante.fr', date: '', abstract: snippet });
+  });
+
+  return items;
 }
 
 function reconstructAbstract(inv) {
@@ -991,7 +1039,7 @@ async function searchOpenAlex(query, withRecos = false) {
 function renderHasResults(results, query) {
   hideAll();
 
-  hasResultsTitle.textContent  = 'Recommandations — OpenAlex';
+  hasResultsTitle.textContent  = 'Recommandations HAS';
   hasResultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
   currentHasResults = results;
   hasResultsContainer.innerHTML = '';
@@ -1040,6 +1088,14 @@ function buildHasCard(r) {
     meta.appendChild(tag);
   });
   if (meta.childNodes.length) card.appendChild(meta);
+
+  const snippet = r.abstract || '';
+  if (snippet) {
+    const snip = document.createElement('p');
+    snip.className = 'result-snippet';
+    snip.textContent = snippet;
+    card.appendChild(snip);
+  }
 
   if (url) {
     const link = document.createElement('a');
