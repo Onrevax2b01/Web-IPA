@@ -646,8 +646,12 @@ function renderResults(results, pubmedQuery) {
     results.forEach((r) => resultsContainer.appendChild(buildCard(r)));
   }
 
-  filterCard.hidden     = false;
-  resultsSection.hidden = false;
+  filterCard.hidden      = false;
+  resultsSection.hidden  = false;
+  // Afficher la colonne OpenAlex avec indicateur de chargement dès maintenant
+  openAlexSection.hidden  = false;
+  openAlexBadge.textContent = '';
+  openAlexContainer.innerHTML = '<p class="openalex-loading">Chargement de la littérature française…</p>';
 }
 
 function buildCard(r) {
@@ -810,47 +814,37 @@ function showBaseChooser() {
 async function loadOpenAlex(query) {
   const gen = ++openAlexGeneration;
   currentOpenAlexResults = [];
-  openAlexSection.hidden = true;
-  openAlexContainer.innerHTML = '';
 
   try {
     const results = await searchOpenAlex(query, false);
     if (gen !== openAlexGeneration) return; // requête périmée
     currentOpenAlexResults = results;
     openAlexBadge.textContent = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
+    openAlexContainer.innerHTML = '';
     if (results.length > 0) {
       results.forEach(r => openAlexContainer.appendChild(buildHasCard(r)));
     } else {
-      openAlexContainer.innerHTML = '<p style="color:var(--muted);font-size:.9rem">Aucun résultat OpenAlex pour cette requête.</p>';
+      openAlexContainer.innerHTML = '<p style="color:var(--muted);font-size:.9rem">Aucun résultat pour cette requête.</p>';
     }
-    openAlexSection.hidden = false;
-  } catch { /* échec silencieux, PubMed suffit */ }
+  } catch {
+    openAlexContainer.innerHTML = '<p style="color:var(--muted);font-size:.9rem">OpenAlex indisponible.</p>';
+  }
 }
 
 function generateOpenAlexSynthesis() {
   if (!currentOpenAlexResults.length) return;
-  synthesisAbstracts.innerHTML = '';
-  synthesisBadge.textContent = currentOpenAlexResults.length + ' référence' + (currentOpenAlexResults.length > 1 ? 's' : '') + ' (OpenAlex)';
-
-  currentOpenAlexResults.slice(0, 8).forEach(r => {
-    const item = document.createElement('div');
-    item.className = 'abstract-item';
-    const meta = [r.source, r.date, r.type].filter(Boolean).join(' · ');
-    item.innerHTML =
-      '<div class="abstract-header" style="cursor:default">' +
-        '<span class="abstract-title">' + escHtml(r.title || 'Sans titre') + '</span>' +
-        (meta ? ' <span class="tag">' + escHtml(meta) + '</span>' : '') +
-      '</div>' +
-      (r.url ? '<a href="' + r.url + '" target="_blank" rel="noopener" class="result-link" style="margin-top:.4rem;display:inline-block">Accéder à l\'article &#8594;</a>' : '');
-    synthesisAbstracts.appendChild(item);
-  });
-
+  const abstracts = currentOpenAlexResults.slice(0, 8).map(r => ({
+    title:    r.title,
+    journal:  r.source,
+    year:     r.date,
+    abstract: r.abstract || 'Résumé non disponible.',
+  }));
   hideAll();
   resultsSection.hidden  = false;
   filterCard.hidden      = false;
   openAlexSection.hidden = false;
-  synthesisCard.hidden   = false;
-  resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  renderSynthesis(abstracts);
+  synthesisBadge.textContent = abstracts.length + ' référence' + (abstracts.length > 1 ? 's' : '') + ' — OpenAlex';
 }
 
 async function runOpenAlexWithPuter() {
@@ -916,8 +910,9 @@ function buildOpenAlexPrompt(question, results) {
     results.slice(0, 8).map((r, i) =>
       '--- Référence ' + (i + 1) + ' ---\n' +
       'Titre : ' + r.title + '\n' +
-      (r.source ? 'Revue : ' + r.source + '\n' : '') +
-      (r.date   ? 'Année : ' + r.date   + '\n' : '')
+      (r.source   ? 'Revue : '   + r.source   + '\n' : '') +
+      (r.date     ? 'Année : '   + r.date     + '\n' : '') +
+      (r.abstract ? 'Résumé : '  + r.abstract + '\n' : '')
     ).join('\n') +
     '\n\n---\n' +
     'Sur la base de ces références françaises, rédige en français une synthèse clinique :\n' +
@@ -950,13 +945,22 @@ async function runHasSearch() {
   }
 }
 
+function reconstructAbstract(inv) {
+  if (!inv || typeof inv !== 'object') return '';
+  const words = [];
+  for (const [word, positions] of Object.entries(inv)) {
+    for (const pos of positions) words[pos] = word;
+  }
+  return words.filter(Boolean).join(' ');
+}
+
 async function searchOpenAlex(query, withRecos = false) {
   const searchTerm = encodeURIComponent(withRecos ? query + ' recommandations guidelines' : query);
   const url = OPENALEX_URL +
     '?search=' + searchTerm +
     '&filter=language:fr' +
     '&per-page=10' +
-    '&select=title,doi,publication_date,type,primary_location,open_access' +
+    '&select=title,doi,publication_date,type,primary_location,open_access,abstract_inverted_index' +
     '&mailto=ipa-search@example.com';
 
   const controller = new AbortController();
@@ -971,11 +975,12 @@ async function searchOpenAlex(query, withRecos = false) {
       const link = doi ? ('https://doi.org/' + doi)
         : (item.open_access?.oa_url || item.primary_location?.landing_page_url || '');
       return {
-        title:  item.title || 'Sans titre',
-        url:    link,
-        source: item.primary_location?.source?.display_name || '',
-        date:   item.publication_date ? item.publication_date.substring(0, 4) : '',
-        type:   item.type || '',
+        title:    item.title || 'Sans titre',
+        url:      link,
+        source:   item.primary_location?.source?.display_name || '',
+        date:     item.publication_date ? item.publication_date.substring(0, 4) : '',
+        type:     item.type || '',
+        abstract: reconstructAbstract(item.abstract_inverted_index),
       };
     });
   } finally {
