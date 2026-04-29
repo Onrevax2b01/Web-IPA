@@ -933,32 +933,80 @@ async function runHasSearch() {
 
   const q = deinterrogativize(raw);
   currentHasQuery = q;
-  showLoading('Recherche de recommandations en cours…');
+  showLoading('Recherche dans les recommandations HAS…');
   hideInfoBoxes();
 
-  try {
-    // Traduire en anglais pour PubMed
-    const english = await translate(q);
-    const searchTerm = english || q;
+  let results = [];
 
-    // PubMed : langue française + type Guideline/Practice Guideline
-    const guidlineQuery = searchTerm
-      + ' AND fre[lang] AND (guideline[pt] OR "practice guideline"[pt] OR "consensus development"[pt])';
+  // 1. SearXNG site:has-sante.fr — JSON gratuit, pas de cl\xe9
+  try { results = await searchHASSearx(q); } catch { /* continue */ }
 
-    const { ids } = await searchPubMedWithMeSH(guidlineQuery);
-    const results  = await getArticleDetails(ids);
-
-    renderHasResults(results.map(r => ({
-      title:    r.title,
-      url:      r.url,
-      source:   r.journal || 'PubMed',
-      date:     r.year,
-      abstract: '',
-    })), q);
-
-  } catch (err) {
-    showError('Erreur : ' + err.message);
+  // 2. Fallback : PubMed recommandations francophones
+  if (results.length < 2) {
+    try {
+      const english = await translate(q);
+      const term = (english || q)
+        + ' AND fre[lang] AND (guideline[pt] OR "practice guideline"[pt])';
+      const { ids } = await searchPubMedWithMeSH(term);
+      const arts    = await getArticleDetails(ids);
+      results = arts.map(r => ({
+        title: r.title, url: r.url,
+        source: r.journal, date: r.year, abstract: '',
+      }));
+    } catch { /* continue */ }
   }
+
+  hasResultsTitle.textContent = results.length && results[0].url.includes('has-sante.fr')
+    ? 'Recommandations HAS'
+    : 'Recommandations cliniques (PubMed FR)';
+
+  renderHasResults(results, q);
+}
+
+async function searchHASSearx(query) {
+  const q = encodeURIComponent('site:has-sante.fr ' + query);
+
+  // Instances SearXNG publiques stables avec API JSON
+  const instances = [
+    'https://searx.be/search?q=' + q + '&format=json&categories=general',
+    'https://searxng.site/search?q=' + q + '&format=json&categories=general',
+    'https://search.mdosch.de/search?q=' + q + '&format=json&categories=general',
+    'https://priv.au/search?q=' + q + '&format=json&categories=general',
+  ];
+
+  const makeProxies = [
+    url => 'https://corsproxy.io/?' + encodeURIComponent(url),
+    url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+  ];
+
+  for (const instance of instances) {
+    for (const makeProxy of makeProxies) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10000);
+        const res = await fetch(makeProxy(instance), { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+
+        const text = await res.text();
+        if (!text.trim().startsWith('{') && !text.trim().startsWith('[')) continue;
+
+        const data = JSON.parse(text);
+        const items = (data.results || [])
+          .filter(r => r.url && r.url.includes('has-sante.fr'))
+          .map(r => ({
+            title:    r.title    || 'Sans titre',
+            url:      r.url,
+            source:   'has-sante.fr',
+            date:     r.publishedDate ? String(r.publishedDate).substring(0, 10) : '',
+            abstract: r.content  || '',
+          }));
+
+        if (items.length >= 2) return items;
+      } catch { /* essayer la combinaison suivante */ }
+    }
+  }
+  return [];
 }
 
 
