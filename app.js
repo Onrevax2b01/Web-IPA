@@ -940,26 +940,37 @@ async function runHasSearch() {
   try {
     const results = await searchHAS(q);
     renderHasResults(results, q);
-  } catch (err) {
-    showError('Erreur de recherche HAS : ' + err.message);
+  } catch {
+    renderHasResults([], q); // affiche le lien direct HAS en fallback
   }
 }
 
 async function searchHAS(query) {
   const ddgUrl = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent('site:has-sante.fr ' + query);
-  const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(ddgUrl);
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
+  // Essai avec plusieurs proxies CORS
+  const proxies = [
+    'https://corsproxy.io/?' + encodeURIComponent(ddgUrl),
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(ddgUrl),
+    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(ddgUrl),
+  ];
 
-  try {
-    const res = await fetch(proxyUrl, { signal: controller.signal });
-    if (!res.ok) throw new Error('Proxy indisponible (' + res.status + ')');
-    const data = await res.json();
-    return parseDDGHtml(data.contents || '');
-  } finally {
-    clearTimeout(timer);
+  for (const proxyUrl of proxies) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(proxyUrl, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const html = await res.text();
+      if (html && html.length > 500) {
+        const results = parseDDGHtml(html);
+        if (results.length > 0) return results;
+      }
+    } catch { /* essayer le suivant */ }
   }
+
+  return []; // déclenche le fallback dans renderHasResults
 }
 
 function parseDDGHtml(html) {
@@ -982,10 +993,9 @@ function parseDDGHtml(html) {
     } catch { url = raw; }
 
     // Garder uniquement les liens HAS
-    if (url && !url.includes('has-sante.fr')) return;
+    if (!url.includes('has-sante.fr')) return;
 
     const snippet = el.querySelector('.result__snippet')?.textContent.trim() || '';
-    const displayUrl = el.querySelector('.result__url')?.textContent.trim() || '';
 
     items.push({ title, url, source: 'has-sante.fr', date: '', abstract: snippet });
   });
