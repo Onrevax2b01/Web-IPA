@@ -97,6 +97,13 @@
         <button class="claude-btn" id="claudeBtn">🤖 Résumé par Claude IA</button>
       </div>
 
+      <!-- Sélecteur de base (PubMed vs OpenAlex) -->
+      <div class="base-chooser" id="baseChooser" hidden>
+        <span class="base-chooser-label">Quelle base ?</span>
+        <button class="base-btn base-pubmed-btn" id="choosePubmedBtn">🌐 Internationale (PubMed)</button>
+        <button class="base-btn base-openalex-btn" id="chooseOpenAlexBtn">🇫🇷 Française (OpenAlex)</button>
+      </div>
+
       <!-- Message limite atteinte -->
       <div class="limit-box" id="limitBox" hidden>
         <p>⚠️ <strong>Limite gratuite atteinte.</strong> Entrez votre clé API Anthropic pour continuer à utiliser Claude IA.</p>
@@ -116,7 +123,7 @@
         </p>
       </div>
 
-      <!-- Synthèse clinique — au-dessus des résultats PubMed -->
+      <!-- Synthèse clinique -->
       <section class="synthesis-card" id="synthesisCard" hidden>
         <div class="synthesis-header">
           <h2>Synthèse clinique</h2>
@@ -132,7 +139,7 @@
         </div>
       </section>
 
-      <!-- Résumé Claude — au-dessus des résultats PubMed -->
+      <!-- Résumé Claude -->
       <section class="claude-card" id="claudeCard" hidden>
         <div class="synthesis-header">
           <h2>🤖 Synthèse générée par Claude</h2>
@@ -141,6 +148,7 @@
         <div class="claude-response" id="claudeResponse"></div>
       </section>
 
+      <!-- Résultats PubMed -->
       <div class="results-header">
         <h2 id="resultsTitle"></h2>
         <span class="results-badge" id="resultsBadge"></span>
@@ -151,6 +159,16 @@
           Voir tous les résultats sur PubMed →
         </a>
       </div>
+
+      <!-- Résultats OpenAlex (chargés en parallèle) -->
+      <div id="openAlexSection" hidden>
+        <div class="results-header openalex-header">
+          <h2>OpenAlex — Littérature française</h2>
+          <span class="results-badge openalex-badge" id="openAlexBadge"></span>
+        </div>
+        <div id="openAlexContainer"></div>
+      </div>
+
     </section>
 
     <!-- Résultats HAS -->

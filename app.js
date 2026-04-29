@@ -47,6 +47,14 @@ const hasClaudeBtn        = document.getElementById('hasClaudeBtn');
 const hasClaudeCard       = document.getElementById('hasClaudeCard');
 const hasClaudeResponse   = document.getElementById('hasClaudeResponse');
 
+// OpenAlex / sélecteur de base
+const baseChooser        = document.getElementById('baseChooser');
+const choosePubmedBtn    = document.getElementById('choosePubmedBtn');
+const chooseOpenAlexBtn  = document.getElementById('chooseOpenAlexBtn');
+const openAlexSection    = document.getElementById('openAlexSection');
+const openAlexBadge      = document.getElementById('openAlexBadge');
+const openAlexContainer  = document.getElementById('openAlexContainer');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let currentPubmedQuery = '';
@@ -58,7 +66,11 @@ let activePeriod       = 0;
 let hasDataCache      = null;
 let currentHasResults = [];
 let currentHasQuery   = '';
-let pendingClaudeCtx  = 'pubmed'; // 'pubmed' | 'has'
+let pendingClaudeCtx  = 'pubmed'; // 'pubmed' | 'has' | 'openalex'
+
+let currentOpenAlexResults = [];
+let openAlexGeneration     = 0;
+let pendingAction          = null; // 'synthesis' | 'claude'
 
 // ── Constantes DCI ───────────────────────────────────────────────────────────
 
@@ -98,9 +110,36 @@ document.querySelectorAll('.period-btn').forEach((btn) => {
   });
 });
 
-synthesisBtn.addEventListener('click', generateSynthesis);
+synthesisBtn.addEventListener('click', () => {
+  if (currentOpenAlexResults.length > 0 && currentArticleIds.length > 0) {
+    pendingAction = 'synthesis';
+    showBaseChooser();
+  } else {
+    generateSynthesis();
+  }
+});
+claudeBtn.addEventListener('click', () => {
+  if (currentOpenAlexResults.length > 0 && currentArticleIds.length > 0) {
+    pendingAction = 'claude';
+    showBaseChooser();
+  } else {
+    pendingClaudeCtx = 'pubmed';
+    handleClaudeBtn();
+  }
+});
+choosePubmedBtn.addEventListener('click', () => {
+  baseChooser.hidden = true;
+  if (pendingAction === 'synthesis') generateSynthesis();
+  else { pendingClaudeCtx = 'pubmed'; handleClaudeBtn(); }
+  pendingAction = null;
+});
+chooseOpenAlexBtn.addEventListener('click', () => {
+  baseChooser.hidden = true;
+  if (pendingAction === 'synthesis') generateOpenAlexSynthesis();
+  else { pendingClaudeCtx = 'openalex'; handleClaudeBtn(); }
+  pendingAction = null;
+});
 copyBtn.addEventListener('click', copyContext);
-claudeBtn.addEventListener('click', () => { pendingClaudeCtx = 'pubmed'; handleClaudeBtn(); });
 hasClaudeBtn.addEventListener('click', () => { pendingClaudeCtx = 'has'; handleClaudeBtn(); });
 saveKeyBtn.addEventListener('click', saveApiKey);
 clearKeyBtn.addEventListener('click', () => {
@@ -170,6 +209,9 @@ async function runSearch() {
     // 4. Détails des articles
     const results = await getArticleDetails(ids);
     renderResults(results, searchTerm);
+
+    // 5. OpenAlex en parallèle (requête française, sans traduction)
+    loadOpenAlex(q);
   } catch (err) {
     showError('Erreur : ' + (err.message || 'Impossible de contacter PubMed.'));
   }
@@ -208,9 +250,11 @@ function handleClaudeBtn() {
   const ownKey = localStorage.getItem('ipa_anthropic_key');
   if (ownKey) {
     if (pendingClaudeCtx === 'has') runHasWithApiKey(ownKey);
+    else if (pendingClaudeCtx === 'openalex') runOpenAlexWithApiKey(ownKey);
     else runWithApiKey(ownKey);
   } else {
     if (pendingClaudeCtx === 'has') runHasWithPuter();
+    else if (pendingClaudeCtx === 'openalex') runOpenAlexWithPuter();
     else runWithPuter();
   }
 }
@@ -225,6 +269,7 @@ function saveApiKey() {
   localStorage.setItem('ipa_anthropic_key', key);
   apiKeySection.hidden = true;
   if (pendingClaudeCtx === 'has') runHasWithApiKey(key);
+  else if (pendingClaudeCtx === 'openalex') runOpenAlexWithApiKey(key);
   else runWithApiKey(key);
 }
 
@@ -658,6 +703,8 @@ function hideAll() {
   claudeCard.hidden        = true;
   hasResultsSection.hidden = true;
   hasClaudeCard.hidden     = true;
+  openAlexSection.hidden   = true;
+  baseChooser.hidden       = true;
 }
 
 function hideInfoBoxes() {
@@ -753,6 +800,134 @@ function deinterrogativize(text) {
   return q.charAt(0).toUpperCase() + q.slice(1);
 }
 
+// ── OpenAlex parallèle (littérature française) ───────────────────────────────
+
+function showBaseChooser() {
+  baseChooser.hidden = false;
+  baseChooser.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function loadOpenAlex(query) {
+  const gen = ++openAlexGeneration;
+  currentOpenAlexResults = [];
+  openAlexSection.hidden = true;
+  openAlexContainer.innerHTML = '';
+
+  try {
+    const results = await searchOpenAlex(query, false);
+    if (gen !== openAlexGeneration) return; // requête périmée
+    currentOpenAlexResults = results;
+    openAlexBadge.textContent = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
+    if (results.length > 0) {
+      results.forEach(r => openAlexContainer.appendChild(buildHasCard(r)));
+    } else {
+      openAlexContainer.innerHTML = '<p style="color:var(--muted);font-size:.9rem">Aucun résultat OpenAlex pour cette requête.</p>';
+    }
+    openAlexSection.hidden = false;
+  } catch { /* échec silencieux, PubMed suffit */ }
+}
+
+function generateOpenAlexSynthesis() {
+  if (!currentOpenAlexResults.length) return;
+  synthesisAbstracts.innerHTML = '';
+  synthesisBadge.textContent = currentOpenAlexResults.length + ' référence' + (currentOpenAlexResults.length > 1 ? 's' : '') + ' (OpenAlex)';
+
+  currentOpenAlexResults.slice(0, 8).forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'abstract-item';
+    const meta = [r.source, r.date, r.type].filter(Boolean).join(' · ');
+    item.innerHTML =
+      '<div class="abstract-header" style="cursor:default">' +
+        '<span class="abstract-title">' + escHtml(r.title || 'Sans titre') + '</span>' +
+        (meta ? ' <span class="tag">' + escHtml(meta) + '</span>' : '') +
+      '</div>' +
+      (r.url ? '<a href="' + r.url + '" target="_blank" rel="noopener" class="result-link" style="margin-top:.4rem;display:inline-block">Accéder à l\'article &#8594;</a>' : '');
+    synthesisAbstracts.appendChild(item);
+  });
+
+  hideAll();
+  resultsSection.hidden  = false;
+  filterCard.hidden      = false;
+  openAlexSection.hidden = false;
+  synthesisCard.hidden   = false;
+  resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function runOpenAlexWithPuter() {
+  if (!currentOpenAlexResults.length) return;
+  claudeBtn.disabled = true;
+  claudeCard.hidden  = true;
+  showLoading('Connexion à Claude gratuit via Puter…');
+  try {
+    await loadPuter();
+    showLoading('Génération de la synthèse (OpenAlex) par Claude…');
+    const prompt = buildOpenAlexPrompt(currentDisplayQuery, currentOpenAlexResults);
+    const res    = await puter.ai.chat(prompt, { model: 'claude-sonnet-4-5' });
+    const text   = res?.message?.content?.[0]?.text ?? res?.message?.content ?? String(res);
+    hideAll();
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+    openAlexSection.hidden = false;
+    claudeResponse.innerHTML = markdownToHtml(text);
+    claudeCard.hidden = false;
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch {
+    hideAll();
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+    openAlexSection.hidden = false;
+    limitBox.hidden        = false;
+    apiKeySection.hidden   = false;
+    apiKeyInput.focus();
+  } finally {
+    claudeBtn.disabled = false;
+  }
+}
+
+async function runOpenAlexWithApiKey(apiKey) {
+  if (!currentOpenAlexResults.length) return;
+  claudeBtn.disabled = true;
+  claudeCard.hidden  = true;
+  showLoading('Génération de la synthèse (OpenAlex) par Claude…');
+  try {
+    const prompt = buildOpenAlexPrompt(currentDisplayQuery, currentOpenAlexResults);
+    const text   = await callClaudeAPI(apiKey, prompt);
+    hideAll();
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+    openAlexSection.hidden = false;
+    claudeResponse.innerHTML = markdownToHtml(text);
+    claudeCard.hidden = false;
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    showError('Erreur Claude : ' + err.message);
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+  } finally {
+    claudeBtn.disabled = false;
+  }
+}
+
+function buildOpenAlexPrompt(question, results) {
+  return (
+    'Tu es un assistant clinique pour infirmiers en pratique avancée (IPA).\n\n' +
+    'Question clinique posée : ' + question + '\n\n' +
+    'Voici ' + results.length + ' références de littérature médicale française issues de OpenAlex :\n\n' +
+    results.slice(0, 8).map((r, i) =>
+      '--- Référence ' + (i + 1) + ' ---\n' +
+      'Titre : ' + r.title + '\n' +
+      (r.source ? 'Revue : ' + r.source + '\n' : '') +
+      (r.date   ? 'Année : ' + r.date   + '\n' : '')
+    ).join('\n') +
+    '\n\n---\n' +
+    'Sur la base de ces références françaises, rédige en français une synthèse clinique :\n' +
+    '1. **Recommandations principales** issues de la littérature française\n' +
+    '2. **Niveau de preuve** (fort / modéré / faible / insuffisant)\n' +
+    '3. **Points de vigilance** pour la pratique infirmière avancée\n\n' +
+    'Sois concis, précis et directement applicable à la pratique clinique.'
+  );
+}
+
 // ── HAS Search via OpenAlex ───────────────────────────────────────────────────
 
 const OPENALEX_URL = 'https://api.openalex.org/works';
@@ -768,15 +943,15 @@ async function runHasSearch() {
   hideInfoBoxes();
 
   try {
-    const results = await searchOpenAlex(q);
+    const results = await searchOpenAlex(q, true);
     renderHasResults(results, q);
   } catch (err) {
     showError('Erreur de recherche : ' + err.message);
   }
 }
 
-async function searchOpenAlex(query) {
-  const searchTerm = encodeURIComponent(query + ' recommandations guidelines');
+async function searchOpenAlex(query, withRecos = false) {
+  const searchTerm = encodeURIComponent(withRecos ? query + ' recommandations guidelines' : query);
   const url = OPENALEX_URL +
     '?search=' + searchTerm +
     '&filter=language:fr' +

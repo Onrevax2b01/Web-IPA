@@ -506,6 +506,49 @@ body {
   color: #0e7490;
 }
 
+/* ── Sélecteur de base (PubMed / OpenAlex) ── */
+.base-chooser {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+  padding: .75rem 1rem;
+  background: #f0f9ff;
+  border-radius: 8px;
+  border: 1.5px solid #bae6fd;
+}
+.base-chooser-label {
+  font-size: .88rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.base-btn {
+  border: none;
+  border-radius: 8px;
+  padding: .5rem 1.1rem;
+  font-size: .88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.base-btn:active { transform: scale(.97); }
+.base-pubmed-btn  { background: var(--blue); color: #fff; }
+.base-pubmed-btn:hover  { background: var(--blue-dark); }
+.base-openalex-btn { background: #0e7490; color: #fff; }
+.base-openalex-btn:hover { background: #0c5f73; }
+
+/* ── Section OpenAlex ── */
+.openalex-header h2 { color: #0e7490; }
+.openalex-badge {
+  background: #cffafe;
+  color: #0e7490;
+}
+#openAlexSection {
+  border-top: 3px solid #0e7490;
+  padding-top: 1rem;
+  margin-top: .5rem;
+}
+
 /* ── Footer ── */
 .footer {
   text-align: center;
