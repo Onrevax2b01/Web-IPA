@@ -37,6 +37,24 @@ const apiKeyInput  = document.getElementById('apiKeyInput');
 const saveKeyBtn   = document.getElementById('saveKeyBtn');
 const clearKeyBtn  = document.getElementById('clearKeyBtn');
 
+// HAS elements
+const hasSearchBtn        = document.getElementById('hasSearchBtn');
+const hasResultsSection   = document.getElementById('hasResultsSection');
+const hasResultsTitle     = document.getElementById('hasResultsTitle');
+const hasResultsBadge     = document.getElementById('hasResultsBadge');
+const hasResultsContainer = document.getElementById('hasResultsContainer');
+const hasClaudeBtn        = document.getElementById('hasClaudeBtn');
+const hasClaudeCard       = document.getElementById('hasClaudeCard');
+const hasClaudeResponse   = document.getElementById('hasClaudeResponse');
+
+// OpenAlex / sélecteur de base
+const baseChooser        = document.getElementById('baseChooser');
+const choosePubmedBtn    = document.getElementById('choosePubmedBtn');
+const chooseOpenAlexBtn  = document.getElementById('chooseOpenAlexBtn');
+const openAlexSection    = document.getElementById('openAlexSection');
+const openAlexBadge      = document.getElementById('openAlexBadge');
+const openAlexContainer  = document.getElementById('openAlexContainer');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let currentPubmedQuery = '';
@@ -45,9 +63,29 @@ let currentArticleIds  = [];
 let activeFilter       = '';
 let activePeriod       = 0;
 
+let hasDataCache      = null;
+let currentHasResults = [];
+let currentHasQuery   = '';
+let pendingClaudeCtx  = 'pubmed'; // 'pubmed' | 'has' | 'openalex'
+
+let currentOpenAlexResults = [];
+let openAlexGeneration     = 0;
+let pendingAction          = null; // 'synthesis' | 'claude'
+
+// ── Constantes DCI ───────────────────────────────────────────────────────────
+
+const STOP_WORDS = new Set([
+  'the','of','in','and','or','for','use','with','during','after','before',
+  'at','by','from','to','on','an','a','is','are','was','were','have','has',
+  'management','treatment','therapy','patients','patient','adults','adult',
+  'role','effect','effects','impact','study','review','analysis','using',
+]);
+
+
 // ── Events ───────────────────────────────────────────────────────────────────
 
 searchBtn.addEventListener('click', runSearch);
+hasSearchBtn.addEventListener('click', runHasSearch);
 queryEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runSearch();
 });
@@ -72,9 +110,37 @@ document.querySelectorAll('.period-btn').forEach((btn) => {
   });
 });
 
-synthesisBtn.addEventListener('click', generateSynthesis);
+synthesisBtn.addEventListener('click', () => {
+  if (currentOpenAlexResults.length > 0 && currentArticleIds.length > 0) {
+    pendingAction = 'synthesis';
+    showBaseChooser();
+  } else {
+    generateSynthesis();
+  }
+});
+claudeBtn.addEventListener('click', () => {
+  if (currentOpenAlexResults.length > 0 && currentArticleIds.length > 0) {
+    pendingAction = 'claude';
+    showBaseChooser();
+  } else {
+    pendingClaudeCtx = 'pubmed';
+    handleClaudeBtn();
+  }
+});
+choosePubmedBtn.addEventListener('click', () => {
+  baseChooser.hidden = true;
+  if (pendingAction === 'synthesis') generateSynthesis();
+  else { pendingClaudeCtx = 'pubmed'; handleClaudeBtn(); }
+  pendingAction = null;
+});
+chooseOpenAlexBtn.addEventListener('click', () => {
+  baseChooser.hidden = true;
+  if (pendingAction === 'synthesis') generateOpenAlexSynthesis();
+  else { pendingClaudeCtx = 'openalex'; handleClaudeBtn(); }
+  pendingAction = null;
+});
 copyBtn.addEventListener('click', copyContext);
-claudeBtn.addEventListener('click', handleClaudeBtn);
+hasClaudeBtn.addEventListener('click', () => { pendingClaudeCtx = 'has'; handleClaudeBtn(); });
 saveKeyBtn.addEventListener('click', saveApiKey);
 clearKeyBtn.addEventListener('click', () => {
   localStorage.removeItem('ipa_anthropic_key');
@@ -83,6 +149,10 @@ clearKeyBtn.addEventListener('click', () => {
   limitBox.hidden = true;
 });
 
+// Vider les anciens caches HAS
+sessionStorage.removeItem('ipa_has');
+sessionStorage.removeItem('ipa_has_v2');
+
 // Pré-remplir la clé si déjà enregistrée
 const storedKey = localStorage.getItem('ipa_anthropic_key');
 if (storedKey) apiKeyInput.value = storedKey;
@@ -90,8 +160,9 @@ if (storedKey) apiKeyInput.value = storedKey;
 // ── Recherche principale ──────────────────────────────────────────────────────
 
 async function runSearch() {
-  const q = queryEl.value.trim();
-  if (!q) { flashInput(); return; }
+  const raw = queryEl.value.trim();
+  if (!raw) { flashInput(); return; }
+  const q = deinterrogativize(raw);
 
   // Réinitialiser les filtres
   activeFilter = '';
@@ -138,6 +209,9 @@ async function runSearch() {
     // 4. Détails des articles
     const results = await getArticleDetails(ids);
     renderResults(results, searchTerm);
+
+    // 5. OpenAlex en parallèle (requête française, sans traduction)
+    loadOpenAlex(q);
   } catch (err) {
     showError('Erreur : ' + (err.message || 'Impossible de contacter PubMed.'));
   }
@@ -175,11 +249,13 @@ function handleClaudeBtn() {
   limitBox.hidden = true;
   const ownKey = localStorage.getItem('ipa_anthropic_key');
   if (ownKey) {
-    // Clé API déjà enregistrée → utiliser directement
-    runWithApiKey(ownKey);
+    if (pendingClaudeCtx === 'has') runHasWithApiKey(ownKey);
+    else if (pendingClaudeCtx === 'openalex') runOpenAlexWithApiKey(ownKey);
+    else runWithApiKey(ownKey);
   } else {
-    // Essayer d'abord via Puter (gratuit)
-    runWithPuter();
+    if (pendingClaudeCtx === 'has') runHasWithPuter();
+    else if (pendingClaudeCtx === 'openalex') runOpenAlexWithPuter();
+    else runWithPuter();
   }
 }
 
@@ -192,7 +268,9 @@ function saveApiKey() {
   }
   localStorage.setItem('ipa_anthropic_key', key);
   apiKeySection.hidden = true;
-  runWithApiKey(key);
+  if (pendingClaudeCtx === 'has') runHasWithApiKey(key);
+  else if (pendingClaudeCtx === 'openalex') runOpenAlexWithApiKey(key);
+  else runWithApiKey(key);
 }
 
 // ── Option 1 : Puter.js (gratuit, compte Puter requis) ───────────────────────
@@ -524,13 +602,6 @@ async function translate(text) {
 
 // ── DCI via RxNorm ────────────────────────────────────────────────────────────
 
-const STOP_WORDS = new Set([
-  'the','of','in','and','or','for','use','with','during','after','before',
-  'at','by','from','to','on','an','a','is','are','was','were','have','has',
-  'management','treatment','therapy','patients','patient','adults','adult',
-  'role','effect','effects','impact','study','review','analysis','using',
-]);
-
 async function findDCI(sentence) {
   const words = sentence.toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -575,8 +646,12 @@ function renderResults(results, pubmedQuery) {
     results.forEach((r) => resultsContainer.appendChild(buildCard(r)));
   }
 
-  filterCard.hidden     = false;
-  resultsSection.hidden = false;
+  filterCard.hidden      = false;
+  resultsSection.hidden  = false;
+  // Afficher la colonne OpenAlex avec indicateur de chargement dès maintenant
+  openAlexSection.hidden  = false;
+  openAlexBadge.textContent = '';
+  openAlexContainer.innerHTML = '<p class="openalex-loading">Chargement de la littérature française…</p>';
 }
 
 function buildCard(r) {
@@ -624,12 +699,16 @@ function showLoading(msg) {
 }
 
 function hideAll() {
-  loadingEl.hidden      = true;
-  errorBox.hidden       = true;
-  resultsSection.hidden = true;
-  filterCard.hidden     = true;
-  synthesisCard.hidden  = true;
-  claudeCard.hidden     = true;
+  loadingEl.hidden         = true;
+  errorBox.hidden          = true;
+  resultsSection.hidden    = true;
+  filterCard.hidden        = true;
+  synthesisCard.hidden     = true;
+  claudeCard.hidden        = true;
+  hasResultsSection.hidden = true;
+  hasClaudeCard.hidden     = true;
+  openAlexSection.hidden   = true;
+  baseChooser.hidden       = true;
 }
 
 function hideInfoBoxes() {
@@ -678,4 +757,458 @@ async function get(url, timeoutMs = 10000) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function getText(url, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
+    return await res.text();
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Délai dépassé.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Désinterrogativisation ────────────────────────────────────────────────────
+
+function deinterrogativize(text) {
+  let q = text.trim().replace(/\s*\?+\s*$/, '');
+
+  const patterns = [
+    /^qu['']est-ce\s+qu['']?\s*/i,
+    /^qu['']est-ce\s+que\s+/i,
+    /^est-ce\s+qu['']?\s*/i,
+    /^est-ce\s+que\s+/i,
+    /^quelles\s+sont\s+(les\s+|l[''])?/i,
+    /^quels\s+sont\s+(les\s+|l[''])?/i,
+    /^quelle\s+est\s+(la\s+|l['']|le\s+)?/i,
+    /^quel\s+est\s+(la\s+|l['']|le\s+)?/i,
+    /^quelle\s+/i,
+    /^quels?\s+/i,
+    /^comment\s+(faire\s+pour\s+|gérer\s+|traiter\s+|prendre\s+en\s+charge\s+)?/i,
+    /^pourquoi\s+/i,
+    /^quand\s+/i,
+    /^y\s+a-t-il\s+/i,
+    /^dans\s+quel\s+cas\s+/i,
+  ];
+
+  for (const p of patterns) {
+    if (p.test(q)) { q = q.replace(p, ''); break; }
+  }
+
+  return q.charAt(0).toUpperCase() + q.slice(1);
+}
+
+// ── OpenAlex parallèle (littérature française) ───────────────────────────────
+
+function showBaseChooser() {
+  baseChooser.hidden = false;
+  baseChooser.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function loadOpenAlex(query) {
+  const gen = ++openAlexGeneration;
+  currentOpenAlexResults = [];
+
+  try {
+    const results = await searchOpenAlex(query, false);
+    if (gen !== openAlexGeneration) return; // requête périmée
+    currentOpenAlexResults = results;
+    openAlexBadge.textContent = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
+    openAlexContainer.innerHTML = '';
+    if (results.length > 0) {
+      results.forEach(r => openAlexContainer.appendChild(buildHasCard(r)));
+    } else {
+      openAlexContainer.innerHTML = '<p style="color:var(--muted);font-size:.9rem">Aucun résultat pour cette requête.</p>';
+    }
+  } catch {
+    openAlexContainer.innerHTML = '<p style="color:var(--muted);font-size:.9rem">OpenAlex indisponible.</p>';
+  }
+}
+
+function generateOpenAlexSynthesis() {
+  if (!currentOpenAlexResults.length) return;
+  const abstracts = currentOpenAlexResults.slice(0, 8).map(r => ({
+    title:    r.title,
+    journal:  r.source,
+    year:     r.date,
+    abstract: r.abstract || 'Résumé non disponible.',
+  }));
+  hideAll();
+  resultsSection.hidden  = false;
+  filterCard.hidden      = false;
+  openAlexSection.hidden = false;
+  renderSynthesis(abstracts);
+  synthesisBadge.textContent = abstracts.length + ' référence' + (abstracts.length > 1 ? 's' : '') + ' — OpenAlex';
+}
+
+async function runOpenAlexWithPuter() {
+  if (!currentOpenAlexResults.length) return;
+  claudeBtn.disabled = true;
+  claudeCard.hidden  = true;
+  showLoading('Connexion à Claude gratuit via Puter…');
+  try {
+    await loadPuter();
+    showLoading('Génération de la synthèse (OpenAlex) par Claude…');
+    const prompt = buildOpenAlexPrompt(currentDisplayQuery, currentOpenAlexResults);
+    const res    = await puter.ai.chat(prompt, { model: 'claude-sonnet-4-5' });
+    const text   = res?.message?.content?.[0]?.text ?? res?.message?.content ?? String(res);
+    hideAll();
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+    openAlexSection.hidden = false;
+    claudeResponse.innerHTML = markdownToHtml(text);
+    claudeCard.hidden = false;
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch {
+    hideAll();
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+    openAlexSection.hidden = false;
+    limitBox.hidden        = false;
+    apiKeySection.hidden   = false;
+    apiKeyInput.focus();
+  } finally {
+    claudeBtn.disabled = false;
+  }
+}
+
+async function runOpenAlexWithApiKey(apiKey) {
+  if (!currentOpenAlexResults.length) return;
+  claudeBtn.disabled = true;
+  claudeCard.hidden  = true;
+  showLoading('Génération de la synthèse (OpenAlex) par Claude…');
+  try {
+    const prompt = buildOpenAlexPrompt(currentDisplayQuery, currentOpenAlexResults);
+    const text   = await callClaudeAPI(apiKey, prompt);
+    hideAll();
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+    openAlexSection.hidden = false;
+    claudeResponse.innerHTML = markdownToHtml(text);
+    claudeCard.hidden = false;
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    showError('Erreur Claude : ' + err.message);
+    resultsSection.hidden  = false;
+    filterCard.hidden      = false;
+  } finally {
+    claudeBtn.disabled = false;
+  }
+}
+
+function buildOpenAlexPrompt(question, results) {
+  return (
+    'Tu es un assistant clinique pour infirmiers en pratique avancée (IPA).\n\n' +
+    'Question clinique posée : ' + question + '\n\n' +
+    'Voici ' + results.length + ' références de littérature médicale française issues de OpenAlex :\n\n' +
+    results.slice(0, 8).map((r, i) =>
+      '--- Référence ' + (i + 1) + ' ---\n' +
+      'Titre : ' + r.title + '\n' +
+      (r.source   ? 'Revue : '   + r.source   + '\n' : '') +
+      (r.date     ? 'Année : '   + r.date     + '\n' : '') +
+      (r.abstract ? 'Résumé : '  + r.abstract + '\n' : '')
+    ).join('\n') +
+    '\n\n---\n' +
+    'Sur la base de ces références françaises, rédige en français une synthèse clinique :\n' +
+    '1. **Recommandations principales** issues de la littérature française\n' +
+    '2. **Niveau de preuve** (fort / modéré / faible / insuffisant)\n' +
+    '3. **Points de vigilance** pour la pratique infirmière avancée\n\n' +
+    'Sois concis, précis et directement applicable à la pratique clinique.'
+  );
+}
+
+// ── HAS Search via OpenAlex ───────────────────────────────────────────────────
+
+const OPENALEX_URL = 'https://api.openalex.org/works';
+
+async function runHasSearch() {
+  const raw = queryEl.value.trim();
+  if (!raw) { flashInput(); return; }
+
+  const q = deinterrogativize(raw);
+  currentHasQuery = q;
+  showLoading('Recherche dans les recommandations HAS…');
+  hideInfoBoxes();
+
+  let results = [];
+
+  // 1. SearXNG site:has-sante.fr — JSON gratuit, pas de cl\xe9
+  try { results = await searchHASSearx(q); } catch { /* continue */ }
+
+  // 2. Fallback : PubMed recommandations francophones
+  if (results.length < 2) {
+    try {
+      const english = await translate(q);
+      const term = (english || q)
+        + ' AND fre[lang] AND (guideline[pt] OR "practice guideline"[pt])';
+      const { ids } = await searchPubMedWithMeSH(term);
+      const arts    = await getArticleDetails(ids);
+      results = arts.map(r => ({
+        title: r.title, url: r.url,
+        source: r.journal, date: r.year, abstract: '',
+      }));
+    } catch { /* continue */ }
+  }
+
+  hasResultsTitle.textContent = results.length && results[0].url.includes('has-sante.fr')
+    ? 'Recommandations HAS'
+    : 'Recommandations cliniques (PubMed FR)';
+
+  renderHasResults(results, q);
+}
+
+async function searchHASSearx(query) {
+  const q = encodeURIComponent('site:has-sante.fr ' + query);
+
+  // Instances SearXNG publiques stables avec API JSON
+  const instances = [
+    'https://searx.be/search?q=' + q + '&format=json&categories=general',
+    'https://searxng.site/search?q=' + q + '&format=json&categories=general',
+    'https://search.mdosch.de/search?q=' + q + '&format=json&categories=general',
+    'https://priv.au/search?q=' + q + '&format=json&categories=general',
+  ];
+
+  const makeProxies = [
+    url => 'https://corsproxy.io/?' + encodeURIComponent(url),
+    url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+  ];
+
+  for (const instance of instances) {
+    for (const makeProxy of makeProxies) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10000);
+        const res = await fetch(makeProxy(instance), { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+
+        const text = await res.text();
+        if (!text.trim().startsWith('{') && !text.trim().startsWith('[')) continue;
+
+        const data = JSON.parse(text);
+        const items = (data.results || [])
+          .filter(r => r.url && r.url.includes('has-sante.fr'))
+          .map(r => ({
+            title:    r.title    || 'Sans titre',
+            url:      r.url,
+            source:   'has-sante.fr',
+            date:     r.publishedDate ? String(r.publishedDate).substring(0, 10) : '',
+            abstract: r.content  || '',
+          }));
+
+        if (items.length >= 2) return items;
+      } catch { /* essayer la combinaison suivante */ }
+    }
+  }
+  return [];
+}
+
+
+function reconstructAbstract(inv) {
+  if (!inv || typeof inv !== 'object') return '';
+  const words = [];
+  for (const [word, positions] of Object.entries(inv)) {
+    for (const pos of positions) words[pos] = word;
+  }
+  return words.filter(Boolean).join(' ');
+}
+
+async function searchOpenAlex(query, withRecos = false) {
+  const searchTerm = encodeURIComponent(withRecos ? query + ' recommandations guidelines' : query);
+  const url = OPENALEX_URL +
+    '?search=' + searchTerm +
+    '&filter=language:fr' +
+    '&per-page=10' +
+    '&select=title,doi,publication_date,type,primary_location,open_access,abstract_inverted_index' +
+    '&mailto=ipa-search@example.com';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error('Réponse HTTP ' + res.status);
+    const data = await res.json();
+    return (data.results || []).map(item => {
+      const doi = item.doi ? item.doi.replace('https://doi.org/', '') : '';
+      const link = doi ? ('https://doi.org/' + doi)
+        : (item.open_access?.oa_url || item.primary_location?.landing_page_url || '');
+      return {
+        title:    item.title || 'Sans titre',
+        url:      link,
+        source:   item.primary_location?.source?.display_name || '',
+        date:     item.publication_date ? item.publication_date.substring(0, 4) : '',
+        type:     item.type || '',
+        abstract: reconstructAbstract(item.abstract_inverted_index),
+      };
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function renderHasResults(results, query) {
+  hideAll();
+
+  hasResultsTitle.textContent = 'Recommandations — Guidelines francophones (PubMed)';
+  hasResultsBadge.textContent = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
+  currentHasResults = results;
+  hasResultsContainer.innerHTML = '';
+
+  // Lien direct HAS toujours visible en haut
+  const hasDirectLink = document.createElement('div');
+  hasDirectLink.className = 'has-direct-link';
+  hasDirectLink.innerHTML =
+    '<span>Chercher dans le catalogue HAS :</span> ' +
+    '<a href="https://www.has-sante.fr/jcms/fc_1249603/fr/recherche?text=' +
+    encodeURIComponent(query) + '" target="_blank" rel="noopener">has-sante.fr →</a>';
+  hasResultsContainer.appendChild(hasDirectLink);
+
+  if (results.length === 0) {
+    const p = document.createElement('p');
+    p.style.cssText = 'color:var(--muted);font-size:.9rem;margin-top:.5rem';
+    p.textContent = 'Aucune recommandation trouvée pour cette requête.';
+    hasResultsContainer.appendChild(p);
+  } else {
+    results.forEach(r => hasResultsContainer.appendChild(buildHasCard(r)));
+  }
+
+  hasResultsSection.hidden = false;
+  hasResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function buildHasCard(r) {
+  const title  = r.title  || r['titre_fr'] || r['titre'] || 'Sans titre';
+  const url    = r.url    || r['lien'] || '';
+  const source = r.source || r['type_de_publication'] || '';
+  const date   = r.date   || r['date_de_mise_en_ligne'] || '';
+
+  const card = document.createElement('div');
+  card.className = 'has-result-item';
+
+  const titleEl = document.createElement('div');
+  titleEl.className = 'result-title';
+  if (url) {
+    const a = document.createElement('a');
+    a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.textContent = title;
+    titleEl.appendChild(a);
+  } else {
+    titleEl.textContent = title;
+  }
+  card.appendChild(titleEl);
+
+  const meta = document.createElement('div');
+  meta.className = 'result-meta';
+  [source, date].filter(Boolean).forEach(label => {
+    const tag = document.createElement('span');
+    tag.className = 'tag'; tag.textContent = label;
+    meta.appendChild(tag);
+  });
+  if (meta.childNodes.length) card.appendChild(meta);
+
+  const snippet = r.abstract || '';
+  if (snippet) {
+    const snip = document.createElement('p');
+    snip.className = 'result-snippet';
+    snip.textContent = snippet;
+    card.appendChild(snip);
+  }
+
+  if (url) {
+    const link = document.createElement('a');
+    link.className = 'result-link'; link.href = url;
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.textContent = 'Lire le document →';
+    card.appendChild(link);
+  }
+
+  return card;
+}
+
+// ── Claude HAS ────────────────────────────────────────────────────────────────
+
+async function runHasWithPuter() {
+  if (!currentHasResults.length) return;
+  hasClaudeBtn.disabled = true;
+  hasClaudeCard.hidden  = true;
+  showLoading('Connexion à Claude gratuit via Puter…');
+
+  try {
+    await loadPuter();
+    showLoading('Génération de la synthèse HAS par Claude…');
+    const prompt = buildHasPrompt(currentHasQuery, currentHasResults);
+    const res    = await puter.ai.chat(prompt, { model: 'claude-sonnet-4-5' });
+    const text   = res?.message?.content?.[0]?.text ?? res?.message?.content ?? String(res);
+
+    hideAll();
+    hasResultsSection.hidden = false;
+    hasClaudeResponse.innerHTML = markdownToHtml(text);
+    hasClaudeCard.hidden = false;
+    hasResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    hideAll();
+    hasResultsSection.hidden = false;
+    limitBox.hidden      = false;
+    apiKeySection.hidden = false;
+    apiKeyInput.focus();
+  } finally {
+    hasClaudeBtn.disabled = false;
+  }
+}
+
+async function runHasWithApiKey(apiKey) {
+  if (!currentHasResults.length) return;
+  hasClaudeBtn.disabled = true;
+  hasClaudeCard.hidden  = true;
+  showLoading('Génération de la synthèse HAS par Claude…');
+
+  try {
+    const prompt = buildHasPrompt(currentHasQuery, currentHasResults);
+    const text   = await callClaudeAPI(apiKey, prompt);
+
+    hideAll();
+    hasResultsSection.hidden = false;
+    hasClaudeResponse.innerHTML = markdownToHtml(text);
+    hasClaudeCard.hidden = false;
+    hasResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    showError('Erreur Claude : ' + err.message);
+    hasResultsSection.hidden = false;
+  } finally {
+    hasClaudeBtn.disabled = false;
+  }
+}
+
+function buildHasPrompt(question, results) {
+  return (
+    'Tu es un assistant clinique pour infirmiers en pratique avancée (IPA).\n\n' +
+    'Question clinique : ' + question + '\n\n' +
+    'Voici les recommandations de la HAS (Haute Autorité de Santé) trouvées :\n\n' +
+    results.slice(0, 8).map((r, i) => {
+      const title = r['title'] || r['label'] || r['titre_fr'] || r['titre'] || r['nom'] || 'Sans titre';
+      const type  = r['type'] || r['typeName'] || r['type_de_publication'] || '';
+      const date  = r['pdate'] || r['date_de_mise_en_ligne'] || r['date'] || '';
+      const theme = r['category'] || r['thematique'] || r['domaine'] || '';
+      return (
+        '--- Recommandation ' + (i + 1) + ' ---\n' +
+        'Titre : ' + title + '\n' +
+        (type  ? 'Type : ' + type + '\n'         : '') +
+        (date  ? 'Date : ' + date + '\n'         : '') +
+        (theme ? 'Thématique : ' + theme + '\n'  : '')
+      );
+    }).join('\n') +
+    '\n\n---\n' +
+    'Sur la base de ces recommandations HAS, rédige en français une synthèse clinique avec :\n' +
+    '1. **Points clés des recommandations HAS** applicables à la question\n' +
+    '2. **Implications pour la pratique infirmière avancée**\n' +
+    '3. **Points de vigilance** importants\n\n' +
+    'Sois concis, précis et directement applicable à la pratique clinique.'
+  );
 }
