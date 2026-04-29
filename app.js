@@ -946,13 +946,13 @@ async function runHasSearch() {
 }
 
 async function searchHAS(query) {
-  const ddgUrl = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent('site:has-sante.fr ' + query);
+  const hasUrl = 'https://www.has-sante.fr/jcms/fc_1249603/fr/recherche?text='
+    + encodeURIComponent(query) + '&orderby=score&nb=10';
 
-  // Essai avec plusieurs proxies CORS
   const proxies = [
-    'https://corsproxy.io/?' + encodeURIComponent(ddgUrl),
-    'https://api.allorigins.win/raw?url=' + encodeURIComponent(ddgUrl),
-    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(ddgUrl),
+    'https://corsproxy.io/?' + encodeURIComponent(hasUrl),
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(hasUrl),
+    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(hasUrl),
   ];
 
   for (const proxyUrl of proxies) {
@@ -964,43 +964,57 @@ async function searchHAS(query) {
       if (!res.ok) continue;
       const html = await res.text();
       if (html && html.length > 500) {
-        const results = parseDDGHtml(html);
+        const results = parseHASHtml(html);
         if (results.length > 0) return results;
       }
     } catch { /* essayer le suivant */ }
   }
 
-  return []; // déclenche le fallback dans renderHasResults
+  return [];
 }
 
-function parseDDGHtml(html) {
-  if (!html) return [];
+function parseHASHtml(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const items = [];
+  const seen = new Set();
 
-  doc.querySelectorAll('.result__body').forEach(el => {
-    const titleEl = el.querySelector('.result__a');
-    if (!titleEl) return;
+  // Stratégie 1 : sélecteurs Jalios CMS courants
+  const selectors = [
+    '.portlet-search-result',
+    '.search-result',
+    'li.result',
+    'article.portlet-item',
+    '.csc-searchResult',
+  ];
+  for (const sel of selectors) {
+    doc.querySelectorAll(sel).forEach(node => {
+      const a = node.querySelector('a[href]');
+      if (!a) return;
+      const url = a.href.startsWith('http') ? a.href : 'https://www.has-sante.fr' + a.getAttribute('href');
+      if (seen.has(url) || !url.includes('has-sante.fr')) return;
+      seen.add(url);
+      const title = (node.querySelector('h2,h3,.title,.portlet-title')?.textContent || a.textContent).trim();
+      const snippet = node.querySelector('.resume,.description,p')?.textContent.trim() || '';
+      const date = node.querySelector('.date,time')?.textContent.trim() || '';
+      items.push({ title, url, source: 'has-sante.fr', date, abstract: snippet });
+    });
+    if (items.length) return items;
+  }
 
-    const title = titleEl.textContent.trim();
-
-    // DDG enveloppe les URLs dans des redirections — on extrait l'URL réelle
-    const raw = titleEl.getAttribute('href') || '';
-    let url = '';
-    try {
-      const match = raw.match(/[?&]uddg=([^&]+)/);
-      url = match ? decodeURIComponent(match[1]) : raw;
-    } catch { url = raw; }
-
-    // Garder uniquement les liens HAS
-    if (!url.includes('has-sante.fr')) return;
-
-    const snippet = el.querySelector('.result__snippet')?.textContent.trim() || '';
-
-    items.push({ title, url, source: 'has-sante.fr', date: '', abstract: snippet });
+  // Stratégie 2 : tous les liens /jcms/ présents sur la page de résultats
+  doc.querySelectorAll('a[href*="/jcms/"]').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    const url = href.startsWith('http') ? href : 'https://www.has-sante.fr' + href;
+    if (seen.has(url)) return;
+    // Exclure liens de navigation (trop courts ou sans identifiant de contenu)
+    if (!href.match(/\/jcms\/[a-z]+_\d{5,}/)) return;
+    seen.add(url);
+    const title = a.textContent.trim();
+    if (title.length < 15) return;
+    items.push({ title, url, source: 'has-sante.fr', date: '', abstract: '' });
   });
 
-  return items;
+  return items.slice(0, 10);
 }
 
 function reconstructAbstract(inv) {
