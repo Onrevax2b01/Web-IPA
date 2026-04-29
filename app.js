@@ -933,75 +933,32 @@ async function runHasSearch() {
 
   const q = deinterrogativize(raw);
   currentHasQuery = q;
-  showLoading('Recherche dans les recommandations HAS…');
+  showLoading('Recherche de recommandations en cours…');
   hideInfoBoxes();
 
-  let results = [];
-  let sourceLabel = 'Recommandations HAS';
+  try {
+    // Traduire en anglais pour PubMed
+    const english = await translate(q);
+    const searchTerm = english || q;
 
-  // 1. API REST Jalios de HAS (JSON - titres/métadonnées)
-  try { results = await searchHASApi(q); } catch { /* continue */ }
+    // PubMed : langue française + type Guideline/Practice Guideline
+    const guidlineQuery = searchTerm
+      + ' AND fre[lang] AND (guideline[pt] OR "practice guideline"[pt] OR "consensus development"[pt])';
 
-  // 2. Fallback garanti : OpenAlex recommandations françaises
-  if (results.length < 2) {
-    try {
-      results = await searchOpenAlex(q, true);
-      sourceLabel = 'Recommandations — OpenAlex FR';
-    } catch { /* continue */ }
+    const { ids } = await searchPubMedWithMeSH(guidlineQuery);
+    const results  = await getArticleDetails(ids);
+
+    renderHasResults(results.map(r => ({
+      title:    r.title,
+      url:      r.url,
+      source:   r.journal || 'PubMed',
+      date:     r.year,
+      abstract: '',
+    })), q);
+
+  } catch (err) {
+    showError('Erreur : ' + err.message);
   }
-
-  hasResultsTitle.textContent = sourceLabel;
-  renderHasResults(results, q);
-}
-
-// Essaie plusieurs variantes de l’API Jalios HAS pour obtenir du JSON
-async function searchHASApi(query) {
-  const base = 'https://www.has-sante.fr';
-
-  // Variantes d’URL de l’API Jalios connues
-  const apiUrls = [
-    base + '/rest/portlets?search=' + encodeURIComponent(query) + '&lang=fr&nb=10&orderby=score',
-    base + '/rest/publications?search=' + encodeURIComponent(query) + '&lang=fr&nb=10',
-    base + '/jcms/fc_1249603/fr/recherche.json?text=' + encodeURIComponent(query) + '&nb=10',
-  ];
-
-  const proxies = [
-    url => 'https://corsproxy.io/?' + encodeURIComponent(url),
-    url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
-  ];
-
-  for (const apiUrl of apiUrls) {
-    for (const makeProxy of proxies) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 12000);
-        const res = await fetch(makeProxy(apiUrl), { signal: controller.signal });
-        clearTimeout(timer);
-        if (!res.ok) continue;
-
-        const text = await res.text();
-        // Ignorer si la réponse est du HTML (page d’erreur ou redirect)
-        if (!text.trim().startsWith('{') && !text.trim().startsWith('[')) continue;
-
-        const data = JSON.parse(text);
-        const list = data.publications || data.items || data.results || data.portlets ||
-                     (Array.isArray(data) ? data : null);
-        if (!list || list.length === 0) continue;
-
-        const mapped = list.map(p => ({
-          title:    p.title || p.label || p.nom || p.name || '',
-          url:      p.url   ? (p.url.startsWith('http') ? p.url : base + p.url)
-                            : (p.uri ? base + p.uri : ''),
-          source:   'has-sante.fr',
-          date:     p.date || p.pdate || p.creationDate || p.modificationDate || '',
-          abstract: p.description || p.resume || p.excerpt || p.abstract || '',
-        })).filter(r => r.title.length > 5);
-
-        if (mapped.length >= 2) return mapped;
-      } catch { /* essayer la combinaison suivante */ }
-    }
-  }
-  return [];
 }
 
 
@@ -1051,18 +1008,25 @@ async function searchOpenAlex(query, withRecos = false) {
 function renderHasResults(results, query) {
   hideAll();
 
-  hasResultsTitle.textContent  = 'Recommandations HAS';
-  hasResultsBadge.textContent  = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
+  hasResultsTitle.textContent = 'Recommandations — Guidelines francophones (PubMed)';
+  hasResultsBadge.textContent = results.length + ' résultat' + (results.length !== 1 ? 's' : '');
   currentHasResults = results;
   hasResultsContainer.innerHTML = '';
 
+  // Lien direct HAS toujours visible en haut
+  const hasDirectLink = document.createElement('div');
+  hasDirectLink.className = 'has-direct-link';
+  hasDirectLink.innerHTML =
+    '<span>Chercher dans le catalogue HAS :</span> ' +
+    '<a href="https://www.has-sante.fr/jcms/fc_1249603/fr/recherche?text=' +
+    encodeURIComponent(query) + '" target="_blank" rel="noopener">has-sante.fr →</a>';
+  hasResultsContainer.appendChild(hasDirectLink);
+
   if (results.length === 0) {
-    // Fallback : lien direct vers HAS
-    hasResultsContainer.innerHTML =
-      '<p style="color:var(--muted);font-size:.9rem">Aucun résultat. ' +
-      '<a href="https://www.has-sante.fr/jcms/fc_1249603/fr/recherche?text=' +
-      encodeURIComponent(query) + '" target="_blank" rel="noopener" style="color:#0e7490;font-weight:600">' +
-      'Rechercher directement sur has-sante.fr →</a></p>';
+    const p = document.createElement('p');
+    p.style.cssText = 'color:var(--muted);font-size:.9rem;margin-top:.5rem';
+    p.textContent = 'Aucune recommandation trouvée pour cette requête.';
+    hasResultsContainer.appendChild(p);
   } else {
     results.forEach(r => hasResultsContainer.appendChild(buildHasCard(r)));
   }

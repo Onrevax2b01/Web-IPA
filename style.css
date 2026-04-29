@@ -500,6 +500,14 @@ body {
 .has-result-item .result-title a { color: inherit; text-decoration: none; }
 .has-result-item .result-title a:hover { text-decoration: underline; }
 .has-result-item .result-link { color: #0e7490; }
+.has-direct-link {
+  display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+  background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
+  padding: .6rem 1rem; font-size: .88rem; margin-bottom: .75rem;
+}
+.has-direct-link span { color: var(--muted); }
+.has-direct-link a { color: #057a55; font-weight: 700; text-decoration: none; }
+.has-direct-link a:hover { text-decoration: underline; }
 .result-snippet { font-size: .85rem; color: var(--muted); margin-top: .35rem; line-height: 1.4; }
 
 .has-results-badge {
