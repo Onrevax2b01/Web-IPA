@@ -1113,14 +1113,6 @@ function buildHasCard(r) {
   });
   if (meta.childNodes.length) card.appendChild(meta);
 
-  const snippet = r.abstract || '';
-  if (snippet) {
-    const snip = document.createElement('p');
-    snip.className = 'result-snippet';
-    snip.textContent = snippet;
-    card.appendChild(snip);
-  }
-
   if (url) {
     const link = document.createElement('a');
     link.className = 'result-link'; link.href = url;
